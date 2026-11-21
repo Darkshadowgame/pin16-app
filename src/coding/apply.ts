@@ -7,7 +7,7 @@ import { ElmClient } from '../obd/elm';
 import { toHex } from '../obd/uds';
 import { cacheAfterWrite } from '../diag/timeline';
 import { Vehicle, vehicleTitle } from '../vehicle/garage';
-import { CodingItem, isOn, withItem } from './items';
+import { CodingItem, fitsStyle, isOn, withItem } from './items';
 
 export type ApplyResult = { ok: boolean; text: string };
 
@@ -23,8 +23,8 @@ export async function applySetting(
   if (!def) return { ok: false, text: 'That module is not on this car.' };
   const before = await client.readCoding(def);
   if (!before) return { ok: false, text: `${def.name} did not give its coding.` };
-  if (client.codingStyle(def) === 'short') return { ok: false, text: `${def.name} uses the old 3-digit short coding, which this setting does not fit. Nothing was changed.` };
-  if (before.length <= item.byte) return { ok: false, text: `${def.name} coding is too short on this car to hold this setting, so it was not changed.` };
+  if (!fitsStyle(item, client.codingStyle(def))) return { ok: false, text: `${def.name} uses ${item.short ? 'a long coding' : 'the old 3-digit short coding'}, which this setting does not fit. Nothing was changed.` };
+  if (item.short ? before.length !== 3 : before.length <= item.byte) return { ok: false, text: `${def.name} coding is too short on this car to hold this setting, so it was not changed.` };
   if (isOn(item, before) === on) return { ok: true, text: `${item.title} is already ${on ? 'on' : 'off'}.` };
   const saved = latest()?.codingOriginal ?? {};
   if (!saved[def.id]) await update({ codingOriginal: { ...saved, [def.id]: toHex(before) } });

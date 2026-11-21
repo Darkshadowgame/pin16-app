@@ -1,7 +1,7 @@
 import { router, Stack, useIsFocused, useLocalSearchParams } from 'expo-router';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Switch, Text, View } from 'react-native';
-import { bitsLabel, CodingItem, codingItemsFor, isOn, withItem } from '../../coding/items';
+import { CodingItem, codingItemsFor, fitsStyle, isOn, placeLabel, withItem } from '../../coding/items';
 import { preflightCheck } from '../../coding/preflight';
 import { groupLabels } from '../../data/groupLabels';
 import { lookupDtc } from '../../data/dtcLibrary';
@@ -23,6 +23,7 @@ import { FaultRow } from '../../components/CodeRow';
 import { allowSleep, stayAwake } from '../../keepAwake';
 import { mergeModuleIds } from '../../vehicle/ids';
 import { cacheAfterWrite } from '../../diag/timeline';
+import { sendLogNow } from '../../share/sendLog';
 
 const hex2 = (n: number) => n.toString(16).toUpperCase().padStart(2, '0');
 // Shown beside the spinner while a coding is written to the car.
@@ -78,6 +79,10 @@ export default function ControlModule() {
     } catch (e) {
       if (alive.current) setMessage({ tone: 'danger', text: e instanceof Error ? e.message : String(e) });
     } finally {
+      // What the module answered goes to the findings store, so a change that
+      // did not take can be looked at afterwards.
+      if (key === 'write') void sendLogNow('Workshop coding write', v ?? null);
+      else if (key === 'clear') void sendLogNow('Workshop faults cleared', v ?? null);
       if (alive.current) setBusy(null);
     }
   };
@@ -154,7 +159,7 @@ export default function ControlModule() {
   const changed = !!coding && !!draft && toHex(coding) !== toHex(draft);
   const knowledge = v.knowledge?.[def.id];
   const items: CodingItem[] = [...codingItemsFor(v.group, v.platform)].filter(
-    (i) => i.module === def.id && !!draft && style !== 'short' && (i.length ? draft.length === i.length : draft.length > i.byte),
+    (i) => i.module === def.id && !!draft && fitsStyle(i, style) && (i.short ? draft.length === 3 : i.length ? draft.length === i.length : draft.length > i.byte),
   );
   const bitName = (byte: number, bit: number) => items.find((i) => i.byte === byte && (i.bits.includes(bit) || (!!i.field && ((i.field.mask >> bit) & 1) === 1)))?.title;
   const imperial = { speed: settings.speed === 'mph', temp: settings.temp === '°F' };
@@ -408,7 +413,7 @@ export default function ControlModule() {
                               {on !== was ? <Pill text="Changed" tone="accent" /> : null}
                             </View>
                             <Text style={[type.small, { color: t.muted }]}>
-                              Byte {i.byte}, {bitsLabel(i)}
+                              {placeLabel(i).charAt(0).toUpperCase() + placeLabel(i).slice(1)}
                               {i.confidence === 'low' ? ' · not tested on this car' : ''}
                             </Text>
                           </View>

@@ -568,3 +568,96 @@ describe('adapter fixes from the bug review of 20 Nov 2026', () => {
     expect(after.faults).toEqual([]);
   });
 });
+
+// A Carista EVO changing a setting on the 2007 Leon's central electronics,
+// recorded with Listen on 21 Nov 2026. Pin16 must send the same bytes.
+describe('long coding write matches the Carista recording', () => {
+  const { tp20WriteCoding } = require('../src/obd/tp20');
+  const coding = [0xe3, 0x0e, 0x1e, 0x0f, 0x00, 0x04, 0x10, 0x00, 0x50, 0x32, 0x00, 0x32, 0x32, 0x00, 0x00, 0x00, 0x00, 0x41, 0xff, 0x07, 0x32, 0x40, 0x00];
+  // Carista's frames, without the first byte (frame type and number).
+  const carista = ['00263B9A000646', '221929B2303032', '1018E30E1E0F00', '04100050320032', '320000000041FF', '07324000FF'];
+
+  it('sends the same frames, quickly, and takes "wait" then 7B 9A as success', async () => {
+    const sent: string[] = [];
+    let acks = 0;
+    const s = new Tp20Session(async (c) => {
+      sent.push(c);
+      let r = '';
+      if (c === '20C000100003011') r = '22000D00003390301';
+      else if (c === 'A00F8AFF32FF1') r = '300A10F8AFF4AFF';
+      else if (c === '1000021089') r = '300B1\r3001000025089';
+      else if (/^1[0-9A-F]07324000FF$/.test(c)) r = '300B7\r3001180037F3B78';
+      else if (/^B[0-9A-F]$/.test(c)) r = ++acks === 2 ? '3001200027B9A' : '';
+      else if (c.startsWith('AT')) r = 'OK';
+      return `${r || 'NO DATA'}\r\r>`;
+    }, '6');
+    expect(await s.open(0x20)).toBe(true);
+    await tp20WriteCoding(s, { style: 'long', coding, sw: [0xb2, 0x30, 0x30, 0x32], wsc: [0x00, 0x06, 0x46, 0x22, 0x19, 0x29] }, coding);
+    const frames = sent.filter((c) => /^[12][0-9A-F]/.test(c) && c.length > 10 && c !== '20C000100003011');
+    expect(frames.map((f) => f.slice(2))).toEqual(carista);
+    // Waiting is off for the frames before the last, and back on for the last.
+    const r0 = sent.indexOf('ATR0');
+    const r1 = sent.indexOf('ATR1');
+    const first = sent.indexOf(frames[0]);
+    const last = sent.indexOf(frames[frames.length - 1]);
+    expect(r0).toBeGreaterThan(-1);
+    expect(r0).toBeLessThan(first);
+    expect(r1).toBeGreaterThan(sent.indexOf(frames[frames.length - 2]));
+    expect(r1).toBeLessThan(last);
+  });
+});
+
+// The 2007 Leon's central electronics on 21 Nov 2026: 6 faults in several messages.
+describe('faults sent as several messages', () => {
+  const { joinFaultMessages } = require('../src/obd/tp20');
+  it('joins the count message and the record messages', () => {
+    const first = [0x58, 0x06];
+    const more = [[0x58, 0x05, 0xe2, 0x2c, 0x03, 0x8a, 0x29], [0x58, 0x08, 0x17, 0x64, 0x05, 0xd8, 0x2a], [0x58], [0x58, 0x05, 0xf0, 0x64, 0x09, 0x56, 0x69], [0x58]];
+    expect(kwpFaults(joinFaultMessages(first, more)).map((f) => f.code)).toEqual(['01506', '00906', '02071', '01496', '01520', '02390']);
+  });
+  it('leaves a single-message answer as it is', () => {
+    expect(kwpFaults(joinFaultMessages([0x58, 0x02, 0x05, 0x19, 0x64, 0x05, 0x18, 0x24], []))).toHaveLength(2);
+    expect(kwpFaults(joinFaultMessages([0x58, 0x00], [[0x58]]))).toEqual([]);
+  });
+  it('reads all 6 through a session, as the adapter log shows them', async () => {
+    const replies: Record<string, string> = {
+      '20C000100003011': '22000D00003390301',
+      A00F8AFF32FF1: '300A10F8AFF4AFF',
+      '1000041802FF00': '300B1\r3001080025806',
+      B1: '3002180075805E22C03\r300128A29',
+      B3: '3002380075808176405\r30014D82A',
+      B5: '30015800158',
+      B6: '3002680075805F06409\r300175669',
+      B8: '30018000158',
+    };
+    const s = new Tp20Session(async (c) => `${replies[c] ?? 'NO DATA'}\r\r>`, '6');
+    expect(await s.open(0x20)).toBe(true);
+    expect((await kwpReadFaults(s)).map((f) => f.code)).toEqual(['01506', '00906', '02071', '01496', '01520', '02390']);
+  });
+});
+
+describe('an adapter that does not take AT R0', () => {
+  it('still sends every frame, and switches responses back on', async () => {
+    const sent: string[] = [];
+    const s = new Tp20Session(async (c) => {
+      sent.push(c);
+      let r = 'NO DATA';
+      if (c === '20C000100003011') r = '22000D00003390301';
+      else if (c === 'A00F8AFF32FF1') r = '300A10F8AFF4AFF';
+      else if (c === 'ATR0') r = '?';
+      else if (c.startsWith('AT')) r = 'OK';
+      else if (c === '12C9') r = '300B3\r3001000036E0600';
+      return `${r}\r\r>`;
+    }, '6');
+    expect(await s.open(0x20)).toBe(true);
+    const write = [0x2e, 0x06, 0x00, 0xc0, 0xc1, 0xc2, 0xc3, 0xc4, 0xc5, 0xc6, 0xc7, 0xc8, 0xc9];
+    expect(await s.request(write, 1500)).toEqual([0x6e, 0x06, 0x00]);
+    expect(sent.filter((c) => c === 'ATR0')).toHaveLength(1);
+    // Responses are switched back on before any frame goes out.
+    expect(sent.indexOf('ATR1')).toBeGreaterThan(sent.indexOf('ATR0'));
+    expect(sent.indexOf('ATR1')).toBeLessThan(sent.indexOf('20000D2E0600C0C1'));
+    // The next long request does not try AT R0 again.
+    await s.request(write, 300).catch(() => undefined);
+    expect(sent.filter((c) => c === 'ATR0')).toHaveLength(1);
+  });
+});

@@ -2,7 +2,7 @@ import { router, useLocalSearchParams } from 'expo-router';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Linking, Pressable, StyleSheet, Switch, Text, View } from 'react-native';
 import { PinMark } from '../../brand/PinMark';
-import { bitsLabel, CodingItem, codingItemsFor, isOn, stateText, withItem } from '../../coding/items';
+import { CodingItem, codingItemsFor, fitsStyle, isOn, placeLabel, stateText, withItem } from '../../coding/items';
 import { LearnedSetting, learnedIsOn, learnedKeys, learnedModules, learnedReady, splitKey, withLearned } from '../../coding/learn';
 import { settingKey, sharedFits, sharedLearned } from '../../coding/shared';
 import { addDiary, SETTING_CHANGED, today } from '../../diary';
@@ -18,6 +18,7 @@ import { space, type, useTheme } from '../../theme';
 import { TOOLS, Chips, ConfirmSheet, GlowCard, Group, Icon, ListRow, NeedsConnection, Notice, Pill, Screen, success, tap, tool } from '../../ui';
 import { TryResult, useGarage, vehicleTitle } from '../../vehicle/garage';
 import { SECTIONS } from '../../help';
+import { sendLogNow } from '../../share/sendLog';
 
 const CATEGORY_ICON: Record<string, React.ComponentProps<typeof Icon>['name']> = {
   'Most popular': 'star-outline',
@@ -179,9 +180,10 @@ export default function Customise() {
     const c = codings[i.module];
     if (reading && !checked.has(i.module) && !c) return false;
     if (!c) return false;
-    // Old 3-digit short coding is not a byte layout: no catalogue bit fits it.
+    // Short items only on short-coded modules, byte and bit items only on the others.
     const def = defOf(i.module);
-    if (def && client?.codingStyle(def) === 'short') return false;
+    if (def && !fitsStyle(i, client?.codingStyle(def))) return false;
+    if (i.short) return c.length === 3;
     // Offered whenever the coding holds the byte. A coding longer or shorter
     // than the source car's is noted under Technical, not hidden.
     return c.length > i.byte;
@@ -319,6 +321,9 @@ export default function Customise() {
     } catch (e) {
       if (alive.current) setMessage({ id: runId, tone: 'danger', text: e instanceof Error ? e.message : String(e) });
     } finally {
+      // What the module answered goes to the findings store, so a change that
+      // did not take can be looked at afterwards.
+      void sendLogNow('Customise change', v);
       if (alive.current) setBusy(null);
     }
   };
@@ -454,11 +459,11 @@ export default function Customise() {
                           <>
                             {i.note ? <Text style={[type.small, { color: t.muted }]}>{i.note}</Text> : null}
                             <Text style={[type.small, { color: t.muted, marginTop: 4 }]}>
-                              {defOf(i.module)?.name ?? i.module}, byte {i.byte}, {bitsLabel(i)}
+                              {defOf(i.module)?.name ?? i.module}, {placeLabel(i)}
                               {i.length && codings[i.module] && codings[i.module]!.length !== i.length ? `. The source car’s coding is ${i.length} bytes; yours is ${codings[i.module]!.length}, so check the result in the car.` : ''}
                             </Text>
-                            <Pressable accessibilityRole="link" hitSlop={6} onPress={() => Linking.openURL(i.sources[0].url)} style={{ marginTop: 6 }}>
-                              <Text style={[type.small, { color: t.accentText }]}>Source: {i.sources[0].label}</Text>
+                            <Pressable accessibilityRole={i.sources[0].url ? 'link' : 'text'} disabled={!i.sources[0].url} hitSlop={6} onPress={() => i.sources[0].url && Linking.openURL(i.sources[0].url)} style={{ marginTop: 6 }}>
+                              <Text style={[type.small, { color: i.sources[0].url ? t.accentText : t.muted }]}>Source: {i.sources[0].label}</Text>
                             </Pressable>
                           </>
                         ) : null}

@@ -78,6 +78,9 @@ export class Tp20Session {
   extras: number[][] = [];
   // The last open() was answered "busy" (D7 or D8): a module is there.
   openBusy = false;
+  // The adapter takes AT R0, so the frames of a long request can go out
+  // without a wait after each (see sendFrom in exchange()).
+  private fastFrames = true;
   // A send in the last open() stalled or timed out (not a clean "no answer"):
   // the address is not known to be silent.
   stalled = false;
@@ -101,7 +104,8 @@ export class Tp20Session {
   // the ACK went out (logs of 15 Nov 2026). Answers that start after the
   // adapter stops listening are caught by the resend in request().
   async enter(): Promise<void> {
-    for (const c of ['ATPBC001', 'ATSPB', 'ATH1', 'ATAT0', 'ATST19', 'ATCFC0']) await this.cmd(c);
+    // AT R1 last: responses on, in case an earlier talk left them off.
+    for (const c of ['ATPBC001', 'ATSPB', 'ATH1', 'ATAT0', 'ATST19', 'ATCFC0', 'ATR1']) await this.cmd(c);
   }
 
   async leave(): Promise<void> {
@@ -253,15 +257,60 @@ export class Tp20Session {
     // The number of the request's first frame: frame i always goes out as
     // firstSeq + i, also when part of the request is sent again.
     const firstSeq = this.txSeq;
+    // Frames before the last get no answer from the module, so the adapter is
+    // told not to wait for one (AT R0) and they go out one Bluetooth round
+    // trip apart. Left to wait its usual 100 ms after each, the adapter spaced
+    // them 150 to 180 ms apart; a Carista EVO sends them 30 ms apart (2007
+    // Leon, Listen recording of 21 Nov 2026). Waiting is switched back on
+    // (AT R1) before the last frame, whose answer must be heard.
     const sendFrom = async (from: number): Promise<Frame[]> => {
       const heard: Frame[] = [];
-      for (let i = from; i < chunks.length; i++) {
-        const last = i === chunks.length - 1;
-        const frame = [(last ? 0x10 : 0x20) | ((firstSeq + i) & 0x0f), ...chunks[i]];
-        heard.push(...(await this.frames(frame.map(hex2).join(''), last ? 1500 : 400)));
-        if (!last) await new Promise((r) => setTimeout(r, 30));
+      // AT R0 was sent (whether or not the adapter confirmed it), so AT R1
+      // must follow before anything whose answer matters.
+      let deaf = false;
+      const listenAgain = async () => {
+        if (!deaf) return;
+        // Sent twice if the first try fails: a deaf adapter hears no module.
+        const ok = await this.send('ATR1', 800).then(
+          () => true,
+          (e) => {
+            if (e instanceof LinkLost) throw e;
+            return false;
+          },
+        );
+        if (!ok) await this.send('ATR1', 1500).catch(() => undefined);
+        deaf = false;
+      };
+      try {
+        for (let i = from; i < chunks.length; i++) {
+          const last = i === chunks.length - 1;
+          const frame = [(last ? 0x10 : 0x20) | ((firstSeq + i) & 0x0f), ...chunks[i]];
+          let quiet = false;
+          if (!last && this.fastFrames) {
+            if (!deaf) {
+              deaf = true;
+              quiet = await this.cmd('ATR0', 800).then(
+                () => true,
+                (e) => {
+                  if (e instanceof LinkLost) throw e;
+                  // The adapter does not know AT R0, or was slow to answer:
+                  // keep the slower pace from now on.
+                  this.fastFrames = false;
+                  return false;
+                },
+              );
+              if (!quiet) await listenAgain();
+            } else quiet = true;
+          }
+          if (last) await listenAgain();
+          heard.push(...(await this.frames(frame.map(hex2).join(''), last ? 1500 : 400)));
+          if (!last && !quiet) await new Promise((r) => setTimeout(r, 30));
+        }
+      } finally {
+        // Never leave the adapter deaf, whatever went wrong.
+        await listenAgain().catch(() => undefined);
+        this.txSeq = (firstSeq + chunks.length) & 0x0f;
       }
-      this.txSeq = (firstSeq + chunks.length) & 0x0f;
       return heard;
     };
     let queue: Frame[] = await sendFrom(0);
@@ -433,7 +482,19 @@ export async function kwpReadFaults(s: Tp20Session): Promise<Tp20Fault[]> {
     r = await s.request(form);
   }
   if (r[0] === 0x7f) throw new ObdError(describeKwp(r));
-  return kwpFaults(r);
+  return kwpFaults(joinFaultMessages(r, s.extras));
+}
+
+// A module with more than 2 faults sends them as several messages: first
+// "58 <count>", then "58" and up to 2 fault records each, with bare "58"
+// fillers between, the last one ending the answer. The 2007 Leon's central
+// electronics sent 6 faults this way (Listen recording and adapter log of 21
+// Nov 2026); reading only the first message showed 2 of them, or none.
+export function joinFaultMessages(first: number[], more: number[][] = []): number[] {
+  if (first[0] !== 0x58) return first;
+  const out = [...first];
+  for (const m of more) if (m[0] === 0x58 && m.length > 1) out.push(...m.slice(1));
+  return out;
 }
 
 export function kwpFaults(msg: number[]): Tp20Fault[] {
@@ -599,7 +660,11 @@ export async function tp20ReadCoding(s: Tp20Session): Promise<Tp20CodingRead | n
     // A record of another shape is not offered for writing: a write built on
     // a wrong parse would shift or shorten the coding.
     if (!long) return null;
-    return { style: 'long', coding: long.coding, sw: long.sw, wsc: long.wsc };
+    // The write sends the workshop code and software bytes of 1A 9B, as
+    // Carista does on the 2007 Leon (Listen recording of 21 Nov 2026: 1A 9B
+    // gave software B2 30 30 32, the 1A 9A record 32 30 30 32, and the write
+    // 3B 9A 00 06 46 22 19 29 B2 30 30 32 10 18 ... FF was answered 7B 9A).
+    return { style: 'long', coding: long.coding, sw, wsc };
   }
   return null;
 }

@@ -98,3 +98,47 @@ describe('multi-bit fields', () => {
     expect(withItem(item, on, false)[0]).toBe(0b1110_0101);
   });
 });
+
+describe('PQ35 items seen on the owner car', () => {
+  const belt = CODING_ITEMS.find((i) => i.id === 'pq35-seat-belt-warning')!;
+  const bulb = CODING_ITEMS.find((i) => i.id === 'pq35-rear-side-bulb-check')!;
+  const { fitsStyle } = jest.requireActual('../src/coding/items') as typeof import('../src/coding/items');
+
+  it('seat belt warning reads and writes the short code', () => {
+    expect(isOn(belt, [0x00, 0x19, 0x01])).toBe(true); // 6401
+    expect(isOn(belt, [0x00, 0x11, 0x31])).toBe(false); // 4401
+    expect(withItem(belt, [0x00, 0x19, 0x01], false)).toEqual([0x00, 0x11, 0x31]);
+    expect(withItem(belt, [0x00, 0x11, 0x31], true)).toEqual([0x00, 0x19, 0x01]);
+    // Other digits stay as they are: 6401 off then on is 6401 again.
+    expect(withItem(belt, withItem(belt, [0x00, 0x19, 0x01], false), true)).toEqual([0x00, 0x19, 0x01]);
+    expect(withItem(belt, [0x00, 0x19, 0x01], true)).toEqual([0x00, 0x19, 0x01]);
+    const off = withItem(belt, [0x00, 0x19, 0x01], false);
+    expect(off[0] * 65536 + off[1] * 256 + off[2]).toBe(4401);
+  });
+
+  it('seat belt warning guards the length', () => {
+    expect(withItem(belt, [1, 2], true)).toEqual([1, 2]);
+    expect(isOn(belt, [1, 2])).toBe(false);
+    expect(isOn(belt, [0xff, 0xff, 0xff])).toBe(false);
+  });
+
+  it('short items are offered only on short-coded modules and the reverse', () => {
+    expect(fitsStyle(belt, 'short')).toBe(true);
+    expect(fitsStyle(belt, 'long')).toBe(false);
+    expect(fitsStyle(belt, 'uds')).toBe(false);
+    expect(fitsStyle(bulb, 'short')).toBe(false);
+    expect(fitsStyle(bulb, 'long')).toBe(true);
+    expect(fitsStyle(bulb, 'uds')).toBe(true);
+    expect(codingItemsFor('vag', 'PQ35').map((i) => i.id)).toEqual(expect.arrayContaining([belt.id, bulb.id]));
+  });
+
+  it('rear side bulb check is byte 18 bit 7 of the 23-byte coding', () => {
+    const c = [0xe3, 0x0e, 0x1e, 0x0f, 0x00, 0x04, 0x10, 0x00, 0x50, 0x32, 0x00, 0x32, 0x32, 0x00, 0x00, 0x00, 0x00, 0x41, 0x7f, 0x07, 0x32, 0x40, 0x00];
+    expect(c.length).toBe(23);
+    expect(isOn(bulb, c)).toBe(false);
+    const on = withItem(bulb, c, true);
+    expect(on[18]).toBe(0xff);
+    expect(on.filter((_, i) => i !== 18)).toEqual(c.filter((_, i) => i !== 18));
+    expect(withItem(bulb, on, false)).toEqual(c);
+  });
+});

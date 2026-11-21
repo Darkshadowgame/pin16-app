@@ -25,6 +25,10 @@ export interface CodingItem {
   confidence: 'high' | 'medium' | 'low';
   // Login code the module asks for before this change, when sources give one.
   login?: number;
+  // Old 3-byte short coding (a 3-byte big-endian number, shown as 7 digits):
+  // the value floor(code / divisor) % modulo holds the flag bit. When given,
+  // byte and bits are not used (write byte 0 and no bits).
+  short?: { divisor: number; modulo: number; flag: number };
   note?: string;
   sources: { label: string; url: string }[];
 }
@@ -42,7 +46,36 @@ const EVO_SWEEP = { label: 'vag-coding.net: Q7 (4M) needle check', url: 'https:/
 const EVO_LAP = { label: 'vag-coding.net: A7 (C8) lap timer', url: 'https://www.vag-coding.net/audi/a7-c8/a7-c8-lap-timer' };
 const MLB_TWEAKS = { label: 'Ross-Tech wiki: A4/A5 (8K/8T) tweaks (MLB sibling)', url: 'https://wiki.ross-tech.com/wiki/index.php/Audi_A4/S4/A5/S5_(8K/8T)_Tweaks' };
 
+const SEEN_ON_CAR = { label: 'Seen changing on this car, Listen recording of 21 Nov 2026', url: '' };
+
 export const CODING_ITEMS: CodingItem[] = [
+  // PQ35 (2007 SEAT Leon), from the owner's recording of another tool.
+  {
+    id: 'pq35-seat-belt-warning',
+    title: 'Seat belt warning',
+    summary: 'The seat belt warning light and chime in the instrument cluster. This is a safety warning: keep it on unless you have a reason.',
+    category: 'Warnings and chimes',
+    platforms: ['PQ35'],
+    module: 'vag-17',
+    byte: 0,
+    bits: [],
+    short: { divisor: 1000, modulo: 100, flag: 2 },
+    confidence: 'high',
+    sources: [{ label: 'Ross-Tech wiki: SEAT Leon (1P) instrument cluster', url: 'https://wiki.ross-tech.com/wiki/index.php/Seat_Leon_(1P)_Instrument_Cluster' }, SEEN_ON_CAR],
+  },
+  {
+    id: 'pq35-rear-side-bulb-check',
+    title: 'Rear side bulb check',
+    summary: 'This is the name the owner noted for the setting. Its effect has not been confirmed, so check what it does on the car.',
+    category: 'Lights',
+    platforms: ['PQ35'],
+    module: 'vag-09',
+    length: 23,
+    byte: 18,
+    bits: [7],
+    confidence: 'medium',
+    sources: [SEEN_ON_CAR],
+  },
   // MQB (Golf 7, Octavia III, A3 8V, Leon 5F) and MLB evo: same cluster bits (replica/vag-sources.md section 3).
   {
     id: 'mqb-needle-sweep',
@@ -206,7 +239,7 @@ export const CODING_ITEMS: CodingItem[] = [
 // source listed, and the coding length taken from whichever gives one.
 const RANK = { high: 3, medium: 2, low: 1 } as const;
 export function mergeItems(lists: CodingItem[][]): CodingItem[] {
-  const key = (i: CodingItem) => `${i.platforms.join()}|${i.module}|${i.byte}|${i.bits.join()}|${i.field?.mask ?? ''}`;
+  const key = (i: CodingItem) => `${i.platforms.join()}|${i.module}|${i.byte}|${i.bits.join()}|${i.field?.mask ?? ''}|${i.short?.divisor ?? ''}`;
   const out = new Map<string, CodingItem>();
   for (const list of lists) {
     for (const i of list) {
@@ -235,7 +268,25 @@ export function codingItemsFor(group: string, platform: string | null): CodingIt
   return ALL_ITEMS.filter((i) => i.platforms.includes(platform));
 }
 
+// Short coding: the 3 bytes as one number, at most 23 bits.
+const SHORT_MAX = 0x7fffff;
+function shortValue(coding: number[]): number | null {
+  if (coding.length !== 3 || coding.some((b) => !Number.isInteger(b) || b < 0 || b > 0xff)) return null;
+  const n = (coding[0] << 16) | (coding[1] << 8) | coding[2];
+  return n > SHORT_MAX ? null : n;
+}
+
+// A short item belongs on short-coded modules; byte and bit items on the others.
+export function fitsStyle(item: CodingItem, style: string | null | undefined): boolean {
+  return item.short ? style === 'short' : style !== 'short';
+}
+
 export function isOn(item: CodingItem, coding: number[]): boolean {
+  if (item.short) {
+    const n = shortValue(coding);
+    if (n == null) return false;
+    return (Math.floor(n / item.short.divisor) % item.short.modulo & item.short.flag) !== 0;
+  }
   const b = coding[item.byte] ?? 0;
   if (item.field) return (b & item.field.mask) === item.field.on;
   return item.bits.every((bit) => (b & (1 << bit)) !== 0);
@@ -243,12 +294,27 @@ export function isOn(item: CodingItem, coding: number[]): boolean {
 
 // New coding with the item's bits set or cleared; everything else unchanged.
 export function withItem(item: CodingItem, coding: number[], on: boolean): number[] {
+  if (item.short) {
+    const n = shortValue(coding);
+    if (n == null) return [...coding];
+    const { divisor, modulo, flag } = item.short;
+    const pair = Math.floor(n / divisor) % modulo;
+    const nextPair = on ? pair | flag : pair & ~flag;
+    const m = n + (nextPair - pair) * divisor;
+    if (m < 0 || m > SHORT_MAX) return [...coding];
+    return [(m >> 16) & 0xff, (m >> 8) & 0xff, m & 0xff];
+  }
   const next = [...coding];
   let b = next[item.byte];
   if (item.field) b = (b & ~item.field.mask) | (on ? item.field.on : item.field.off);
   else for (const bit of item.bits) b = on ? b | (1 << bit) : b & ~(1 << bit);
   next[item.byte] = b & 0xff;
   return next;
+}
+
+// Where the setting sits, for Technical lines: "byte 2, bit 4" or "digits 3 and 4, flag 2".
+export function placeLabel(item: CodingItem): string {
+  return item.short ? `digits 3 and 4 of the short code, flag +${String(item.short.flag).padStart(2, '0')}` : `byte ${item.byte}, ${bitsLabel(item)}`;
 }
 
 // "bit 2" or "bits 4 and 5" for a setting, including multi-bit fields.
