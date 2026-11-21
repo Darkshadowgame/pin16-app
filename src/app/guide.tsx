@@ -47,6 +47,7 @@ const ICON: Record<GuideId, IconName> = {
   fuelTrims: 'gas-station' as IconName,
   boost: 'turbine' as IconName,
   carReference: 'book-open-page-variant' as IconName,
+  calibrations: 'tune-vertical' as IconName,
 };
 
 const firstSentence = (s: string) => {

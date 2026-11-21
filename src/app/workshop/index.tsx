@@ -96,6 +96,11 @@ export default function Workshop() {
           )}
         </>
       )}
+      {group === 'vag' && conn.vehicle.platform === 'PQ35' ? (
+        <Group header="Calibrations" footer="Heater flap and throttle body, repeated from another tool’s run on this car.">
+          <ListRow first {...tool('calibrations')} title="Calibrations" onPress={() => router.push('/calibrations')} />
+        </Group>
+      ) : null}
       {client.canListen ? (
         <Group header="Record another tool" help={SECTIONS.workshopListen} footer="With a Y-splitter, record what VCDS or another tool sends, to add its functions to Pin16.">
           <ListRow first {...tool('listen')} title="Listen mode" onPress={() => router.push('/listen')} />

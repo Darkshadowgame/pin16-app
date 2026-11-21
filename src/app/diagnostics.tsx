@@ -591,7 +591,7 @@ export default function Diagnostics() {
                 <Arrive key={def.id}>
                   <Group header={`${def.name}${def.code && group === 'vag' ? ` · ${def.code}` : ''}`} help={k === 0 ? SECTIONS.diagFaults : undefined}>
                     {results[def.id].faults.map((f, i) => (
-                      <FaultRow key={f.code} fault={f} module={def.name} moduleId={f.kwp ? undefined : def.id} first={i === 0} />
+                      <FaultRow key={f.code} fault={f} module={def.name} moduleId={f.kwp ? undefined : def.id} detailModuleId={f.kwp ? def.id : undefined} first={i === 0} />
                     ))}
                     <Pressable
                       accessibilityRole="button"
@@ -688,7 +688,7 @@ export default function Diagnostics() {
                     onPress={m.moduleId && !m.error ? () => router.push({ pathname: '/workshop/[id]', params: { id: m.moduleId! } }) : undefined}
                   />
                   {m.faults.map((f) => (
-                    <CodeRow key={f.code} code={f.code} sub="Stored" module={(m.moduleId && client?.moduleById(m.moduleId)?.name) || tp20Name(m.address)} />
+                    <CodeRow key={f.code} code={f.code} sub="Stored" module={(m.moduleId && client?.moduleById(m.moduleId)?.name) || tp20Name(m.address)} detailModuleId={m.moduleId} />
                   ))}
                   {m.faults.length ? (
                     <Pressable

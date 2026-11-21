@@ -46,7 +46,8 @@ export type GuideId =
   | 'trip'
   | 'fuelTrims'
   | 'boost'
-  | 'carReference';
+  | 'carReference'
+  | 'calibrations';
 
 export const GUIDES: Record<GuideId, Help> = {
   home: {
@@ -255,6 +256,7 @@ export const GUIDES: Record<GuideId, Help> = {
       'Built-in switches are for VW group cars (VW, Audi, SEAT, Skoda and Cupra) whose model Pin16 knows. Other cars have guides only, and the page says so at the top.',
       'On a car with no built-in switches, Learn a setting is the first row: change a setting once in Carista and Pin16 learns it as a switch for your car.',
       'Backups lets you put a module’s original coding back at any time.',
+      'On a PQ35 car (such as the 2007 SEAT Leon), Adjustable values lists numbers a module keeps, such as coming home time. See that group’s ? for how it works.',
     ],
     note: 'Nothing stops a change: not the engine running, a low battery or a coding of a different length. If a change does not save on a battery below 10.5 V, run the engine or connect a charger and try again.',
   },
@@ -295,14 +297,16 @@ export const GUIDES: Record<GuideId, Help> = {
     title: 'Reset with the adapter',
     what: 'Resets the service or oil reminder through the adapter, for cars where the instrument menu cannot do it.',
     how: [
-      'No reset is built in for any car yet. Resets for this car lists the ones learned on this car, so it is empty until you learn one.',
+      'One reset is built in: Reset the oil service, for a PQ35 car (such as the 2007 SEAT Leon) whose instrument cluster uses the older VW protocol. It sets the cluster’s service reminder to 0 at once (adaptation channel 2 saved as 0), checks the module is the cluster first, and says whether the cluster accepted it. The value read before and after is shown for information: a reminder that already read 0 does not prove a change.',
+      'For other cars, Resets for this car lists the ones learned on this car, so it is empty until you learn one.',
       'Learning needs another tool (Carista, VCDS or a garage tool) to reset the service once.',
       'Learn it by compare: save the cluster values, reset the service with the other tool, then compare. No extra parts are needed.',
       'Learn it by recording: record the other tool with Listen mode. This needs an OBD Y-splitter.',
       'On a car whose instrument cluster uses the older VW protocol, learning by compare is switched off and recording is the only way.',
-      'Every step is shown before anything is sent, old values are kept, and they are put back if a step is refused.',
+      'For a learned reset, every step is shown before anything is sent, old values are kept, and they are put back if a step is refused.',
+      'Reset the oil service on a PQ35 car is built in. It writes at once: it sets the cluster’s service reminder to 0, then shows the value read before and the value read back.',
     ],
-    note: 'Nothing is guessed: only steps learned on this car are sent.',
+    note: 'Nothing is guessed: only steps learned on this car, or recorded working on this car, are sent.',
   },
 
   knowledge: {
@@ -350,6 +354,7 @@ export const GUIDES: Record<GuideId, Help> = {
       'Modules that answered your last health check come first under On this car, with their fault count.',
       'Show more lists the modules that did not answer: not fitted, asleep, or on the older VW protocol. You can still open one to try it.',
       'Tap a module to read its faults, values and coding.',
+      'On a PQ35 car, Calibrations at the foot of the page runs the heater flap and throttle body calibrations.',
       'Listen mode records what another tool, such as VCDS, sends to the car.',
     ],
     note: 'Module access is set up for VW group, Ford and Mazda cars on CAN.',
@@ -564,6 +569,21 @@ export const GUIDES: Record<GuideId, Help> = {
     ],
     note: 'The handbook and the labels on the car win over anything here.',
   },
+  calibrations: {
+    title: 'Calibrations',
+    what: 'Two calibrations on a PQ35 car such as the 2007 SEAT Leon: the heater flap and the throttle body. Pin16 repeats a calibration recorded from another tool on this car and shows what the module reports. It does not judge the result.',
+    how: [
+      'Tap Start. Pin16 starts the calibration and shows the text or values the module reports, with a time counter.',
+      'Tap Finish to end the run. It also ends by itself at the longest run time: 45 seconds for the heater flap, 150 seconds for the throttle body.',
+      'The heater flap calibration takes about 30 seconds. The throttle body calibration takes about 2 minutes.',
+      'Pin16 does not know what state the car needs to be in. Follow the car’s handbook or the other tool’s instructions.',
+      'Tap Technical under a calibration for the group number and the module it runs on.',
+      'Pin16 checks the module that answers is the one meant before it starts anything.',
+      'German text from the module is shown as sent, with a plain English line under it where Pin16 has one.',
+      'Going back while a run is active asks first. Each run is saved to History.',
+    ],
+    note: 'Only for PQ35 cars. Pin16 writes nothing to the module except starting and ending the calibration.',
+  },
 };
 
 // The User guide page: screen guides grouped by what you want to do.
@@ -574,7 +594,7 @@ export const GUIDE_GROUPS: { title: string; ids: GuideId[] }[] = [
   { title: 'Drive monitors', ids: ['monitors', 'knock', 'dpf', 'trip'] },
   { title: 'Change settings', ids: ['customise', 'learnSetting', 'customiseGuide', 'service', 'serviceReset', 'diagChanges'] },
   { title: 'Tools', ids: ['knowledge', 'fuses', 'diary', 'diaryAdd'] },
-  { title: 'Expert', ids: ['workshop', 'module', 'partNumbers', 'learnCar', 'discover', 'listen'] },
+  { title: 'Expert', ids: ['workshop', 'calibrations', 'module', 'partNumbers', 'learnCar', 'discover', 'listen'] },
   { title: 'App', ids: ['settings'] },
 ];
 
@@ -673,6 +693,7 @@ export const SECTIONS: Record<string, Help> = {
     how: [
       'The code chip is the code people look up, for example P0011. The line below gives the status and fault type.',
       'Tap a fault for causes and fixes.',
+      'A fault from an older-protocol module has a Details button at its right: tap it for when the fault was logged, how often and its priority.',
       'Clear removes this module’s faults only.',
     ],
     note: 'Works with the engine running. A few modules only clear with the engine off and the ignition on.',
@@ -687,6 +708,26 @@ export const SECTIONS: Record<string, Help> = {
     what: 'Modules on the list for your kind of car that gave no answer.',
     how: ['Most are not fitted to your car.', 'Some are not reachable from this port.'],
   },
+  adaptations: {
+    title: 'Adjustable values',
+    what: 'Numbers a module keeps on a PQ35 car, such as coming home time or how the car confirms locking. Each comes from a public source named under the row.',
+    how: [
+      'Pin16 reads each value once Customise has read the settings, one module at a time. A value the module does not have is left out.',
+      'Change a value with the buttons or chips and Pin16 saves it at once, then reads it back and says under the row whether it took.',
+      'The first value Pin16 ever read for a row is kept as its original. Put back original under the row, or Put back in the Change timeline, saves it again.',
+      'Every change is saved to History and your diary.',
+    ],
+    note: 'Switch the ignition off and on to see a change. Pin16 does not stop a change.',
+  },
+  faultDetail: {
+    title: 'Fault details',
+    what: 'For a fault read from an older-protocol module, the module can say when the fault was logged.',
+    how: [
+      'Tap the word Details at the right of the fault. Pin16 asks the module and shows the mileage when it was logged (in the unit from Settings), how many times it has happened and its priority.',
+      'If the module does not support it, the line “This module gives no detail for this fault” is shown. If the read fails, tap Details again to retry.',
+      'The fault list never waits for this read.',
+    ],
+  },
   diagOlder: {
     title: 'Older VW modules',
     what: 'Some VW group modules, such as central electronics, comfort and doors, speak an older protocol and are found by a separate look.',
@@ -694,6 +735,7 @@ export const SECTIONS: Record<string, Help> = {
       'Pin16 looks for them once, at the end of the first health check on a car, and saves what it finds.',
       'After that they are read with every health check, and Customise and Workshop include them.',
       'Tap a module to open it in Workshop; tap a fault for its meaning. Fault numbers are VW 5-digit codes.',
+      'Tap Details at the right of a fault for when it was logged, how often and its priority.',
     ],
     note: 'Looking changes nothing in the car.',
   },
@@ -1037,16 +1079,16 @@ export const SECTIONS: Record<string, Help> = {
     what: 'A service reset sent through the adapter, for cars whose reminder only resets with a diagnostic tool.',
     how: [
       'The commands are not publicly documented for most cars, so Pin16 learns them on your car: by comparing the instrument cluster before and after another tool resets it, or by recording that tool with Listen mode.',
-      'No reset is built in for any car yet. Until one is learned, use the buttons in the car where the Service page gives a method.',
+      'The only built-in reset is the oil service on a PQ35 car whose cluster uses the older protocol. On other cars, until one is learned, use the buttons in the car where the Service page gives a method.',
     ],
   },
   serviceResets: {
     title: 'Resets for this car',
     what: 'The service resets Pin16 can send to this car.',
     how: [
-      'Each one was learned on this car, by recording or by compare. None is built in, so the list is empty until you learn one.',
-      'Tap one to see every step before anything is sent. Nothing is sent until you confirm.',
-      'Before each write Pin16 reads and keeps the old value. If the module refuses a step, the values already written are put back.',
+      'Each one was learned on this car, by recording or by compare, except Reset the oil service on a PQ35 car, which is built in and writes at once.',
+      'Tap a learned reset to see every step before anything is sent. Nothing is sent until you confirm. Reset the oil service has no steps list: it writes when you tap it.',
+      'Before each write Pin16 reads and keeps the old value. If the module refuses a step of a learned reset, the values already written are put back. The oil service reset shows the old value but does not put it back, as the reminder then counts from 0.',
     ],
     note: 'A routine the module has already run cannot be undone; the steps list shows any routine before you confirm.',
   },

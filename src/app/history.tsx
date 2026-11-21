@@ -22,6 +22,7 @@ const KIND_TOOL: Record<HistoryKind, ToolId> = {
   discover: 'discover',
   mot: 'mot',
   battery: 'battery',
+  calibration: 'calibrations',
 };
 const FILTERS: { key: 'all' | HistoryKind; label: string }[] = [
   { key: 'all', label: 'All' },
@@ -33,6 +34,7 @@ const FILTERS: { key: 'all' | HistoryKind; label: string }[] = [
   { key: 'discover', label: 'Learn my car' },
   { key: 'mot', label: 'MOT' },
   { key: 'battery', label: 'Battery' },
+  { key: 'calibration', label: 'Calibrations' },
 ];
 
 // Everything Pin16 did with a car, readable with no adapter connected:

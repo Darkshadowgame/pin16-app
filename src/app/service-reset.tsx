@@ -1,6 +1,6 @@
 import { router } from 'expo-router';
 import React, { useEffect, useRef, useState } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { Linking, Pressable, StyleSheet, Text, View } from 'react-native';
 import { preflightCheck } from '../coding/preflight';
 import { addDiary, today } from '../diary';
 import { diaryMileage } from '../diaryCars';
@@ -10,7 +10,9 @@ import { addHistory } from '../history';
 import { allowSleep, stayAwake } from '../keepAwake';
 import { ModuleDef } from '../obd/modules';
 import { Change, changedValues, describeStep, publicResets, resetFromCompare, ResetTarget, resetTargets, ServiceReset } from '../service/obdReset';
+import { OIL_RESET, oilResetFits, oilResetWording } from '../service/oilReset';
 import { DISTANCE_RESTARTS_NOTICE, markDoneKm, markDoneSkipsKm } from '../service/reminder';
+import { sendLogNow } from '../share/sendLog';
 import { useConnection } from '../state';
 import { MONO, radius, space, type, useTheme } from '../theme';
 import { TOOLS, Button, ConfirmSheet, Field, GlowCard, Group, Label, ListRow, NeedsConnection, Notice, Pill, ProgressBar, Screen, success, tool } from '../ui';
@@ -67,6 +69,8 @@ export default function ServiceResetScreen() {
   const saved = v.serviceResets ?? [];
   const tries = publicResets(v);
   const busy = progress != null;
+  // Built in: the oil service reset on the older-protocol cluster of a PQ35 car.
+  const oilBuiltIn = oilResetFits(v) && !!cluster && olderCluster && cluster.id === OIL_RESET.module;
 
   // Every value in the service ranges of the cluster, read in the extended session.
   const readCluster = async (label: string): Promise<Record<string, string>> => {
@@ -207,6 +211,45 @@ export default function ServiceResetScreen() {
     }
   };
 
+  // Saves adaptation channel 2 as 0 on the cluster at once, reads the value
+  // before and after, and says plainly whether it took.
+  const runOil = async () => {
+    if (!cluster) return;
+    setMessage(null);
+    setSending(true);
+    stayAwake('service-reset');
+    setProgress({ value: 0.5, label: 'Resetting the oil service' });
+    try {
+      const check = await preflightCheck(client);
+      const res = await client.saveAdaptation(cluster, OIL_RESET.channel, OIL_RESET.value);
+      const w = oilResetWording(res);
+      const km = markDoneKm(v) ?? v.odometerKm;
+      const detail = w.text;
+      if (w.took) {
+        success();
+        const title = `${OIL_RESET.title} (built in, adaptation channel ${OIL_RESET.channel} saved as ${OIL_RESET.value})`;
+        await addDiary({ vin: v.vin, vehicleName: vehicleTitle(v), date: today(), kind: 'Service reset', ...diaryMileage(km, settings.speed === 'mph'), notes: `${title}. ${detail}` });
+        await addHistory({ vin: v.vin, kind: 'service', title, detail, odometerKm: km });
+        const now = garage.latest(v.vin) ?? v;
+        // Stored like the learned reset: only a fresh figure restarts the distance (km is for History and the diary).
+        if (now.service) await garage.update(v.vin, { service: { ...now.service, lastDate: today(), lastKm: markDoneKm(v) } });
+      } else {
+        await addHistory({ vin: v.vin, kind: 'service', title: `${OIL_RESET.title} did not take`, detail, odometerKm: v.odometerKm });
+      }
+      const tail = w.took ? ` Switch the ignition off and on, then check the service display. Saved to History and your diary.${v.service && markDoneSkipsKm(v) ? ` ${DISTANCE_RESTARTS_NOTICE}` : ''}` : check.note ? ` ${check.note}` : '';
+      if (alive.current) setMessage({ tone: w.tone, text: `${w.text}${tail}` });
+    } catch (e) {
+      if (alive.current) setMessage({ tone: 'danger', text: `Did not take. ${e instanceof Error ? e.message : String(e)}` });
+    } finally {
+      allowSleep('service-reset');
+      void sendLogNow('Service reset', v);
+      if (alive.current) {
+        setProgress(null);
+        setSending(false);
+      }
+    }
+  };
+
   const remove = (id: string) => garage.update(v.vin, { serviceResets: saved.filter((s) => s.id !== id) });
 
   return (
@@ -214,7 +257,7 @@ export default function ServiceResetScreen() {
       <GlowCard tone="plain" style={{ padding: space.lg }}>
         <Text style={[type.title3, { color: t.text }]}>Reset with the adapter</Text>
         <Text style={[type.sub, { color: t.muted, marginTop: 4 }]}>
-          For cars whose service reminder only resets with a diagnostic tool. Pin16 sends only what it learned on this car, keeps every value it changes, and puts them back if a step is refused.
+          For cars whose service reminder only resets with a diagnostic tool. A learned reset sends only what Pin16 learned on this car, keeps every value it changes, and puts them back if a step is refused. The built-in oil reset is one write and is not put back.
         </Text>
       </GlowCard>
 
@@ -227,11 +270,11 @@ export default function ServiceResetScreen() {
       ) : null}
 
       {/* The limit, said plainly: nothing is built in, and what learning a reset needs. */}
-      {!saved.length && !tries.length ? (
+      {!saved.length && !tries.length && !oilBuiltIn ? (
         <Notice
           icon="information-outline"
           tone="info"
-          text={`No reset is built in for this car yet: Pin16 has no built-in service reset for any car. It can reset the service only after it has learned the reset on this car, and that needs another tool (Carista, VCDS or a garage tool) to do the reset once. ${
+          text={`No reset is built in for this car yet. Pin16 has one built-in reset, the oil service on a PQ35 car whose instrument cluster uses the older protocol. Other cars can be reset only after Pin16 has learned the reset on the car, and that needs another tool (Carista, VCDS or a garage tool) to do the reset once. ${
             !cluster
               ? 'Pin16 does not know where this car keeps its service data, so the way to learn it is to record that tool with Listen mode, which needs an OBD Y-splitter.'
               : olderCluster
@@ -241,11 +284,23 @@ export default function ServiceResetScreen() {
         />
       ) : null}
 
-      <Group header="Resets for this car" help={SECTIONS.serviceResets} footer={saved.length || tries.length ? 'Tap one to see its steps before anything is sent.' : 'No resets yet. Learn one below, the next time the service is reset with another tool.'}>
+      <Group header="Resets for this car" help={SECTIONS.serviceResets} footer={[oilBuiltIn ? 'The built-in oil reset writes at once.' : null, saved.length || tries.length ? 'A learned reset shows its steps before anything is sent.' : null, !oilBuiltIn && !saved.length && !tries.length ? 'No resets yet. Learn one below, the next time the service is reset with another tool.' : null].filter(Boolean).join(' ')}>
+        {oilBuiltIn ? (
+          <ListRow
+            first
+            icon="oil"
+            iconColour={TOOLS.service.colour}
+            title={OIL_RESET.title}
+            subtitle={`${OIL_RESET.writes}. Writes at once.`}
+            right={<Pill text="Built in" />}
+            disabled={busy}
+            onPress={runOil}
+          />
+        ) : null}
         {saved.map((r, i) => (
           <ListRow
             key={r.id}
-            first={i === 0}
+            first={i === 0 && !oilBuiltIn}
             icon="wrench-clock"
             iconColour={TOOLS.service.colour}
             title={r.title}
@@ -257,7 +312,7 @@ export default function ServiceResetScreen() {
         {tries.map((r, i) => (
           <ListRow
             key={r.id}
-            first={!saved.length && i === 0}
+            first={!saved.length && !oilBuiltIn && i === 0}
             icon="wrench-clock"
             iconColour={TOOLS.service.colour}
             title={r.title}
@@ -267,7 +322,12 @@ export default function ServiceResetScreen() {
             onPress={() => ask(r)}
           />
         ))}
-        {!saved.length && !tries.length ? <ListRow first title="No reset learned yet" noChevron /> : null}
+        {!saved.length && !tries.length && !oilBuiltIn ? <ListRow first title="No reset learned yet" noChevron /> : null}
+        {oilBuiltIn ? (
+          <Pressable accessibilityRole="link" hitSlop={6} onPress={() => Linking.openURL(OIL_RESET.sourceUrl)} style={{ paddingHorizontal: space.lg, paddingVertical: space.md }}>
+            <Text style={[type.small, { color: t.accentText }]}>Source: {OIL_RESET.sourceLabel}</Text>
+          </Pressable>
+        ) : null}
       </Group>
 
       {olderCluster ? (

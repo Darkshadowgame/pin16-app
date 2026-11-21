@@ -724,7 +724,7 @@ async function unlock(s: Tp20Session, code?: number): Promise<void> {
   if (r[0] !== 0x67) throw new ObdError('The login code was not accepted.');
 }
 
-function describeKwp(r: number[]): string {
+export function describeKwp(r: number[]): string {
   if (r[0] !== 0x7f) return 'Unexpected answer.';
   const why: Record<number, string> = { 0x11: 'not supported', 0x12: 'not supported in this form', 0x22: 'conditions not right (ignition on, engine off)', 0x31: 'value out of range', 0x33: 'security login needed', 0x72: 'could not save' };
   return `Refused: ${why[r[2]] ?? `code ${r[2]?.toString(16)}`}.`;

@@ -2,6 +2,8 @@ import { router, useLocalSearchParams } from 'expo-router';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Linking, Pressable, StyleSheet, Switch, Text, View } from 'react-native';
 import { PinMark } from '../../brand/PinMark';
+import { LinkLost } from '../../obd/transport';
+import { AdaptationItem, adaptationKey, adaptationResultText, adaptationsFor, canStep, clampToRow, formatAdaptation, inRange, isAdaptationKey, itemForKey, stepValue, valueFromHex, valueHex } from '../../coding/adaptations';
 import { CodingItem, codingItemsFor, fitsStyle, isOn, placeLabel, stateText, withItem } from '../../coding/items';
 import { LearnedSetting, learnedIsOn, learnedKeys, learnedModules, learnedReady, splitKey, withLearned } from '../../coding/learn';
 import { settingKey, sharedFits, sharedLearned } from '../../coding/shared';
@@ -15,7 +17,7 @@ import { toHex } from '../../obd/uds';
 import { cacheAfterWrite } from '../../diag/timeline';
 import { useConnection } from '../../state';
 import { space, type, useTheme } from '../../theme';
-import { TOOLS, Chips, ConfirmSheet, GlowCard, Group, Icon, ListRow, NeedsConnection, Notice, Pill, Screen, success, tap, tool } from '../../ui';
+import { TOOLS, Chips, ConfirmSheet, Field, GlowCard, Group, Icon, ListRow, NeedsConnection, Notice, Pill, Screen, Stepper, success, tap, tool } from '../../ui';
 import { TryResult, useGarage, vehicleTitle } from '../../vehicle/garage';
 import { SECTIONS } from '../../help';
 import { sendLogNow } from '../../share/sendLog';
@@ -54,7 +56,9 @@ export default function Customise() {
   const client = conn.client;
   // Put back from the change timeline: the module to restore, when it has a backup.
   const params = useLocalSearchParams<{ restore?: string }>();
-  const wantRestore = params.restore && v?.codingOriginal?.[params.restore] ? params.restore : null;
+  const wantRestore = params.restore && !isAdaptationKey(params.restore) && v?.codingOriginal?.[params.restore] ? params.restore : null;
+  // A put back of an adjustable value from the change timeline.
+  const wantAdaptRestore = params.restore && isAdaptationKey(params.restore) && v?.codingOriginal?.[params.restore] ? params.restore : null;
   // Settings saved in the shared knowledge base, loaded once. They are not
   // confirmed on a car, so they show as read-only notes, never as switches.
   const [kbItems, setKbItems] = useState<CodingItem[]>([]);
@@ -111,6 +115,21 @@ export default function Customise() {
     };
   }, []);
 
+  // Adjustable values (PQ35): current value per key, null when the module has
+  // no such channel. Read one module at a time once the settings are read.
+  const adaptItems = adaptationsFor(v?.group, v?.platform);
+  const [adaptValues, setAdaptValues] = useState<Record<string, number | null>>({});
+  const [adaptReading, setAdaptReading] = useState<string | null>(null);
+  const [adaptDone, setAdaptDone] = useState(false);
+  const [adaptBusy, setAdaptBusy] = useState<string | null>(null);
+  const [adaptMsg, setAdaptMsg] = useState<Record<string, { ok: boolean; text: string }>>({});
+  const [adaptOpen, setAdaptOpen] = useState<string | null>(null);
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const adaptRunning = useRef(false);
+  const readAdaptRef = useRef<(() => Promise<void>) | undefined>(undefined);
+  const changeAdaptRef = useRef<((a: AdaptationItem, wanted: number, o?: { putBack?: boolean; top?: boolean }) => Promise<void>) | undefined>(undefined);
+  const restoredAdapt = useRef<string | null>(null);
+
   // force: read every module again (Read again). Otherwise a module read
   // earlier on this connection is used as it is.
   const read = useCallback(async (force = false) => {
@@ -138,6 +157,7 @@ export default function Customise() {
       setChecked(new Set(done));
     }
     setReading(false);
+    void readAdaptRef.current?.();
     if (v) {
       const cache = Object.fromEntries(Object.entries(out).filter(([k, c]) => !!c && c.length > 0 && !written.current.has(k)).map(([k, c]) => [k, toHex(c!)]));
       // Built on the newest saved copy, not the one this read started with: a
@@ -152,6 +172,26 @@ export default function Customise() {
     if (moduleIds.length) read();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [read]);
+
+  // Nothing else to read first: read the adjustable values on their own.
+  useEffect(() => {
+    if (!moduleIds.length && client?.supportsModules) void readAdaptRef.current?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [client, v?.vin, v?.platform]);
+
+  // Put back an adjustable value from the change timeline, once it has been read.
+  useEffect(() => {
+    if (!v || !wantAdaptRestore || !adaptDone || restoredAdapt.current === wantAdaptRestore) return;
+    restoredAdapt.current = wantAdaptRestore;
+    const a = itemForKey(wantAdaptRestore);
+    const orig = v.codingOriginal?.[wantAdaptRestore];
+    if (!a || !orig) return;
+    const cur = adaptValues[wantAdaptRestore];
+    if (cur == null) setMessage({ tone: 'danger', text: `${a.title} did not answer, so it could not be read. Check the ignition is on, then tap Read settings again.` });
+    else if (cur === valueFromHex(orig)) setMessage({ tone: 'ok', text: `${a.title} already has its original value. Nothing to put back.` });
+    else void changeAdaptRef.current?.(a, valueFromHex(orig), { putBack: true, top: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [wantAdaptRestore, adaptDone]);
 
   // Put back from the change timeline: once the module has been read, the
   // usual restore confirmation opens (or a note when it is original already).
@@ -327,6 +367,109 @@ export default function Customise() {
       if (alive.current) setBusy(null);
     }
   };
+
+  // Reads each listed channel, one module at a time. A channel the module does
+  // not have is left out. The first value ever read is kept as the original.
+  readAdaptRef.current = async () => {
+    if (!client || !adaptItems.length || adaptRunning.current) return;
+    adaptRunning.current = true;
+    const out: Record<string, number | null> = {};
+    let lost = false;
+    try {
+      for (const m of [...new Set(adaptItems.map((a) => a.module))]) {
+        if (lost) break;
+        const def = client.moduleById(m);
+        if (!def) continue;
+        for (const a of adaptItems.filter((x) => x.module === m)) {
+          if (!alive.current || lost) break;
+          setAdaptReading(m);
+          const key = adaptationKey(a);
+          let r: Awaited<ReturnType<typeof client.readAdaptation>> = null;
+          try {
+            r = await client.readAdaptation(def, a.channel);
+          } catch (e) {
+            // A lost adapter ends the reads: nothing more can be asked of it.
+            if (e instanceof LinkLost) {
+              lost = true;
+              break;
+            }
+          }
+          out[key] = r ? r.value : null;
+          if (alive.current) setAdaptValues((old) => ({ ...old, [key]: out[key] }));
+        }
+      }
+      const saved = garage.latest(v.vin)?.codingOriginal ?? {};
+      const fresh = Object.entries(out).filter(([k, val]) => val != null && !saved[k]);
+      if (fresh.length) await garage.update(v.vin, { codingOriginal: { ...saved, ...Object.fromEntries(fresh.map(([k, val]) => [k, valueHex(val!)])) } });
+    } finally {
+      adaptRunning.current = false;
+      if (alive.current) {
+        setAdaptReading(null);
+        setAdaptDone(true);
+      }
+    }
+  };
+
+  // Saves one adjustable value at once: reads it back, says under the row
+  // whether it took, and records History and the diary.
+  changeAdaptRef.current = async (a, wanted, o = {}) => {
+    const key = adaptationKey(a);
+    const def = client?.moduleById(a.module);
+    const current = adaptValues[key];
+    if (!client || !def || current == null || wanted === current || adaptBusy) return;
+    setAdaptBusy(key);
+    setAdaptMsg((m) => ({ ...m, [key]: { ok: true, text: '' } }));
+    const show = (ok: boolean, text: string) => {
+      if (!alive.current) return;
+      if (o.top) setMessage({ tone: ok ? 'ok' : 'danger', text });
+      else setAdaptMsg((m) => ({ ...m, [key]: { ok, text } }));
+    };
+    try {
+      const check = await preflight();
+      const res = await client.saveAdaptation(def, a.channel, wanted);
+      const result = adaptationResultText(a, wanted, res);
+      const before = res?.before ?? current;
+      const after = res?.after ?? null;
+      // The first value ever read stays as the original.
+      const saved = garage.latest(v.vin)?.codingOriginal ?? {};
+      const original = saved[key] ?? valueHex(before);
+      if (!saved[key]) await garage.update(v.vin, { codingOriginal: { ...saved, [key]: original } });
+      if (after != null && alive.current) setAdaptValues((old) => ({ ...old, [key]: after }));
+      const moved = after != null && after !== before;
+      if (result.ok || moved) {
+        const nowValue = after ?? wanted;
+        await garage.update(v.vin, { codingCache: cacheAfterWrite(garage.latest(v.vin)?.codingCache, [{ key, hex: valueHex(nowValue) }]) });
+        const what = o.putBack ? `${a.title} original ${formatAdaptation(a, valueFromHex(original))} put back` : `${a.title} ${formatAdaptation(a, before)} to ${formatAdaptation(a, nowValue)}`;
+        await addDiary({
+          vin: v.vin,
+          vehicleName: vehicleTitle(v),
+          date: today(),
+          kind: SETTING_CHANGED,
+          mileage: null,
+          notes: result.ok ? (o.putBack ? `${what}.` : `Changed: ${what}. Put it back in Customise, under ${a.title}.`) : `Part changed: ${what}. The module did not confirm the value. Check it in Customise.`,
+        });
+        await addHistory({
+          vin: v.vin,
+          kind: 'change',
+          title: `${what.charAt(0).toUpperCase()}${what.slice(1)}${result.ok ? '' : ' (not confirmed)'}`,
+          detail: def.name,
+          before: valueHex(before),
+          after: valueHex(nowValue),
+          odometerKm: v.odometerKm,
+          changes: [{ module: def.name, key, setting: a.title, from: formatAdaptation(a, before), to: formatAdaptation(a, nowValue), before: valueHex(before), after: valueHex(nowValue), backup: original, source: 'Customise' }],
+        });
+      }
+      if (result.ok && alive.current) success();
+      show(result.ok, `${result.text}${result.ok ? ' Saved to History and your diary.' : check.note ? ` ${check.note}` : ''}`);
+    } catch (e) {
+      show(false, e instanceof Error ? e.message : String(e));
+    } finally {
+      void sendLogNow('Customise change', v);
+      if (alive.current) setAdaptBusy(null);
+    }
+  };
+  const adaptLocked = !!busy || !!adaptBusy || !!adaptReading;
+  const adaptModules = [...new Set(adaptItems.map((a) => a.module))].filter((m) => adaptItems.some((a) => a.module === m && typeof adaptValues[adaptationKey(a)] === 'number'));
 
   const mods = modsForVehicle(v.group, v.platform);
   const cats = categoriesFor(mods);
@@ -600,6 +743,105 @@ export default function Customise() {
         </Group>
       ) : null}
 
+      {adaptReading && !cat ? (
+        <View style={styles.loading}>
+          <ActivityIndicator color={t.muted} />
+          <Text style={[type.sub, { color: t.muted, flex: 1 }]}>Reading adjustable values: {defOf(adaptReading)?.name ?? adaptReading}.</Text>
+        </View>
+      ) : null}
+
+      {!cat && adaptDone && !adaptReading && adaptItems.length > 0 && !adaptModules.length ? (
+        <Text style={[type.sub, { color: t.muted, marginBottom: space.lg }]}>
+          No adjustable values read from {[...new Set(adaptItems.map((a) => defOf(a.module)?.name ?? a.module))].join(' or ')}.
+        </Text>
+      ) : null}
+
+      {!cat
+        ? adaptModules.map((m, gi) => (
+            <Group key={m} header={`Adjustable values · ${defOf(m)?.name ?? m}`} help={gi === 0 ? SECTIONS.adaptations : undefined} footer={gi === adaptModules.length - 1 ? 'Each change saves at once, and the first value Pin16 read is kept as the original. A value the module does not have is not listed.' : undefined}>
+              {adaptItems
+                .filter((a) => a.module === m && typeof adaptValues[adaptationKey(a)] === 'number')
+                .map((a, n) => {
+                  const key = adaptationKey(a);
+                  const cur = adaptValues[key] as number;
+                  const working = adaptBusy === key;
+                  const orig = v.codingOriginal?.[key];
+                  const origValue = orig ? valueFromHex(orig) : null;
+                  const wide = !a.choices && (a.max - a.min) / a.step > 12;
+                  const msg = adaptMsg[key];
+                  return (
+                    <View key={key} style={[styles.adapt, { borderColor: t.border, borderTopWidth: n ? StyleSheet.hairlineWidth : 0 }]}>
+                      <View style={[styles.item, { paddingVertical: 0, paddingHorizontal: 0 }]}>
+                        <Pressable accessibilityRole="button" accessibilityLabel={`${a.title}, ${adaptOpen === key ? 'hide' : 'show'} details`} onPress={() => setAdaptOpen(adaptOpen === key ? null : key)} style={{ flex: 1 }}>
+                          <Text style={[type.body, { color: t.text }]}>{a.title}</Text>
+                          <Text style={[type.small, { color: t.muted, marginTop: 1 }]}>
+                            Now {formatAdaptation(a, cur)}
+                            {inRange(a, cur) ? '' : ' (outside the usual range)'}
+                          </Text>
+                        </Pressable>
+                        {working ? (
+                          <ActivityIndicator color={t.accentText} />
+                        ) : !a.choices && !wide ? (
+                          <Stepper value={formatAdaptation(a, cur)} width={64} disabled={adaptLocked} noLower={!canStep(a, cur, -1)} noHigher={!canStep(a, cur, 1)} onStep={(d) => void changeAdaptRef.current?.(a, stepValue(a, cur, d))} />
+                        ) : null}
+                      </View>
+                      {a.choices ? (
+                        <Chips options={a.choices.map((c) => ({ id: String(c.value), label: c.label }))} value={String(cur)} onCard tall disabled={adaptLocked} onPick={(id) => void changeAdaptRef.current?.(a, Number(id))} style={{ marginTop: space.sm }} />
+                      ) : null}
+                      {wide ? (
+                        <Field
+                          value={drafts[key] ?? String(cur)}
+                          onChange={(x) => setDrafts((d) => ({ ...d, [key]: x.replace(/[^0-9]/g, '').slice(0, 3) }))}
+                          keyboard="number-pad"
+                          number
+                          editable={!adaptLocked}
+                          accessibilityLabel={`${a.title}, ${a.min} to ${a.max} ${a.unit ?? ''}`}
+                          placeholder={`${a.min} to ${a.max} ${a.unit ?? ''}`}
+                          onEndEditing={(text) => {
+                            const typed = Number(text.trim());
+                            setDrafts((d) => {
+                              const { [key]: _gone, ...rest } = d;
+                              return rest;
+                            });
+                            if (!text.trim()) return;
+                            // Brought inside min, max and the step; nothing is sent for anything else.
+                            const x = clampToRow(a, typed);
+                            if (x == null) {
+                              setAdaptMsg((m) => ({ ...m, [key]: { ok: false, text: `${a.min} to ${a.max}${a.unit ? ` ${a.unit}` : ''} only, in whole numbers. Nothing was sent.` } }));
+                              return;
+                            }
+                            if (x !== typed) setAdaptMsg((m) => ({ ...m, [key]: { ok: true, text: `${a.min} to ${a.max}${a.unit ? ` ${a.unit}` : ''} only, so ${formatAdaptation(a, x)} is used.` } }));
+                            if (x !== cur) void changeAdaptRef.current?.(a, x);
+                          }}
+                          style={{ marginTop: space.sm }}
+                        />
+                      ) : null}
+                      {adaptOpen === key ? (
+                        <>
+                          <Text style={[type.small, { color: t.muted, marginTop: 4 }]}>{a.summary}</Text>
+                          <Text style={[type.small, { color: t.muted, marginTop: 4 }]}>
+                            {defOf(a.module)?.name ?? a.module}, adaptation channel {a.channel}. {a.choices ? '' : `${a.min} to ${a.max}${a.unit ? ` ${a.unit}` : ''}, steps of ${a.step}.`}
+                          </Text>
+                          {a.needs ? <Text style={[type.small, { color: t.muted, marginTop: 4 }]}>{a.needs}</Text> : null}
+                          <Pressable accessibilityRole="link" hitSlop={6} onPress={() => Linking.openURL(a.sources[0].url)} style={{ marginTop: 6 }}>
+                            <Text style={[type.small, { color: t.accentText }]}>Source: {a.sources[0].label}</Text>
+                          </Pressable>
+                        </>
+                      ) : null}
+                      {working ? <Text style={[type.small, { color: t.muted, marginTop: 4 }]}>Writing. Keep this page open.</Text> : null}
+                      {msg?.text ? <Text style={[type.small, { color: msg.ok ? t.ok : t.danger, marginTop: 4 }]}>{msg.text}</Text> : null}
+                      {origValue != null && origValue !== cur ? (
+                        <Pressable accessibilityRole="button" hitSlop={6} disabled={adaptLocked} onPress={() => void changeAdaptRef.current?.(a, origValue, { putBack: true })} style={{ paddingVertical: 14, alignSelf: 'flex-start' }}>
+                          <Text style={[type.small, { color: t.accentText }]}>Put back original ({formatAdaptation(a, origValue)})</Text>
+                        </Pressable>
+                      ) : null}
+                    </View>
+                  );
+                })}
+            </Group>
+          ))
+        : null}
+
       {items.length ? moreGroup : null}
 
       {kbNotes.length ? (
@@ -708,6 +950,7 @@ function TriedPill({ r }: { r: TryResult }) {
 const styles = StyleSheet.create({
   hero: { flexDirection: 'row', alignItems: 'center', gap: space.md, padding: space.lg },
   loading: { flexDirection: 'row', alignItems: 'center', gap: space.sm, padding: space.lg },
+  adapt: { paddingVertical: space.md, paddingHorizontal: space.lg },
   item: { flexDirection: 'row', alignItems: 'center', gap: space.md, paddingVertical: space.md, paddingHorizontal: space.lg },
   // A badge always sits on its own line under the setting's name.
   badge: { flexDirection: 'row', marginTop: 4 },

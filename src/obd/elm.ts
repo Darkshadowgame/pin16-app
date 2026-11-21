@@ -14,6 +14,7 @@ import type { ServiceReset } from '../service/obdReset';
 import { MAX_DIDS, soleAnswer, splitKnown } from './multiDid';
 import { batchCommand, batchVerdict, chunkPids, parseBatch } from './livePidBatch';
 import { MeasuringCell, parseMeasuringBlock } from './tp20';
+import { Adaptation, AdaptationSave, BasicEnd, BasicOptions, FaultDetail, kwpReadAdaptation, kwpReadFaultDetail, kwpRunBasicSetting, kwpSaveAdaptation } from './kwpAdapt';
 import { secondBusNote } from './msCan';
 import { GROUP_LABELS } from '../data/groupLabels';
 import { kwpFaults, kwpReadFaults, VAG_ADDRESS_NAMES, parseGatewayList, parseKwpIdent, Tp20Coding, tp20Identity, tp20Name, tp20LeaveCommands, tp20ReadCoding, tp20WriteCoding, Tp20Module, Tp20Session, TP20_CANDIDATES } from './tp20';
@@ -38,6 +39,14 @@ const TP20_EXPECT: Record<string, RegExp> = {
   'vag-42': /959793|959701|959801|TSG ?FA|J386|driver/i,
   'vag-52': /959792|959702|959802|TSG ?BF|J387|passenger/i,
   'vag-17': /920|KOMBI|cluster/i,
+  // From the 1A 9B answers in the 21 Nov 2026 recording of a 2007 SEAT Leon
+  // (replica/findings/cupra-listen-2026-11-21/2026-11-21T12-38-24.dec): the
+  // climate module said part 1P0907044, component "ClimatronicPQ35"; the
+  // engine said part 1P0907115C, component "2.0l R4/4V TFSI". Only those
+  // texts are known, so the patterns match only them. Every other module with
+  // no entry here (the gateway, for one) is not checked.
+  'vag-08': /ClimatronicPQ35|1P0907044/i,
+  engine: /1P0907115|R4\/4V TFSI/i,
 };
 
 export interface VehicleInfo {
@@ -596,6 +605,60 @@ export class ElmClient {
     const a = this.tp20Address(def);
     if (a == null) return null;
     return this.tp20(a, async (s) => parseMeasuringBlock(await s.request([0x21, group]).catch(() => []), group));
+  }
+
+  // VW adaptation channel (31 B8 01 03 ...), one TP2.0 channel. Null when the
+  // module has no TP2.0 route, no such channel, or does not answer.
+  async readAdaptation(def: ModuleDef, channel: number): Promise<Adaptation | null> {
+    const a = this.tp20Address(def);
+    if (a == null) return null;
+    try {
+      return (await this.tp20(a, (s) => kwpReadAdaptation(s, channel), false)) ?? null;
+    } catch (e) {
+      if (e instanceof LinkLost) throw e;
+      return null;
+    }
+  }
+
+  // Saves one adaptation value with the module's workshop code (the oil
+  // service reset is channel 2 on the cluster, value 0). Null without a route.
+  async saveAdaptation(def: ModuleDef, channel: number, value: number): Promise<AdaptationSave | null> {
+    const a = this.tp20Address(def);
+    if (a == null) return null;
+    try {
+      return await this.tp20(a, (s) => kwpSaveAdaptation(s, channel, value, { reopen: () => s.open(a), expect: TP20_EXPECT[def.id], moduleName: def.name }), false);
+    } catch (e) {
+      if (e instanceof LinkLost) throw e;
+      return { accepted: false, ok: false, before: null, after: null, reason: e instanceof Error ? e.message : String(e) };
+    }
+  }
+
+  // Runs a basic setting group (31 B8 00 <group>) until it ends, is cancelled
+  // or maxMs passes. Null without a route or when no channel opens.
+  async runBasicSetting(def: ModuleDef, group: number, options: BasicOptions): Promise<BasicEnd | null> {
+    const a = this.tp20Address(def);
+    if (a == null) return null;
+    try {
+      return await this.tp20(a, (s) => kwpRunBasicSetting(s, group, { ...options, expect: TP20_EXPECT[def.id] }), false);
+    } catch (e) {
+      if (e instanceof LinkLost) throw e;
+      return 'failed';
+    }
+  }
+
+  // Detail of one stored fault (12 00 04): status, priority, frequency, reset
+  // counter and mileage. code: the 5-digit VW number. 'unsupported' when the
+  // module says so (7F 12 11); null when the read failed or has no route, so
+  // the caller can try again later.
+  async readFaultDetail(def: ModuleDef, code: string): Promise<FaultDetail | 'unsupported' | null> {
+    const a = this.tp20Address(def);
+    if (a == null) return null;
+    try {
+      return (await this.tp20(a, (s) => kwpReadFaultDetail(s, code), false)) ?? null;
+    } catch (e) {
+      if (e instanceof LinkLost) throw e;
+      return null;
+    }
   }
 
   // Reads one group over and over on one open channel until keepGoing() is false.

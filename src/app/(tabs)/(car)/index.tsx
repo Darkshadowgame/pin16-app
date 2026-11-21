@@ -299,6 +299,7 @@ function Connected() {
 
       <Group header="Expert" footer="Optional. Workshop opens one module at a time; Learn my car, above, reads everything and fills in these screens.">
         <ListRow first {...tool('workshop')} title="Workshop" value="Every module" onPress={() => router.push('/workshop')} />
+        {v.group === 'vag' && v.platform === 'PQ35' && conn.client?.supportsModules ? <ListRow {...tool('calibrations')} title="Calibrations" value="Heater flap, throttle" onPress={() => router.push('/calibrations')} /> : null}
         <ListRow {...tool('sensors')} title="Find my car’s sensors" value={sensors.maker ? `${sensors.maker.toLocaleString('en-GB')} found` : undefined} onPress={() => router.push('/sensors')} />
         <ListRow {...tool('discover')} title="Unknown values" value="Explore" onPress={() => router.push('/discover')} />
         <ListRow {...tool('listen')} title="Listen mode" value="Other tools" onPress={() => router.push('/listen')} />

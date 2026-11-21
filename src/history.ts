@@ -3,7 +3,7 @@
 // no adapter connected.
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-export type HistoryKind = 'scan' | 'clear' | 'change' | 'service' | 'sensors' | 'discover' | 'mot' | 'battery';
+export type HistoryKind = 'scan' | 'clear' | 'change' | 'service' | 'sensors' | 'discover' | 'mot' | 'battery' | 'calibration';
 
 export interface HistoryFault {
   module: string;
@@ -64,6 +64,7 @@ export const HISTORY_LABEL: Record<HistoryKind, string> = {
   discover: 'Learn my car',
   mot: 'MOT check',
   battery: 'Battery test',
+  calibration: 'Calibrations',
 };
 
 const KEY = 'caristini.history.v1';

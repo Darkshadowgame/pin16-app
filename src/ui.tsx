@@ -161,6 +161,7 @@ export const TOOLS = {
   report: { icon: 'file-document-outline', colour: 'indigo' },
   logger: { icon: 'chart-line', colour: 'indigo' },
   workshop: { icon: 'wrench-outline', colour: 'gold' },
+  calibrations: { icon: 'tune-vertical', colour: 'gold' },
   diary: { icon: 'notebook-outline', colour: 'gold' },
   listen: { icon: 'ear-hearing', colour: 'grey' },
   details: { icon: 'pencil-outline', colour: 'grey' },
@@ -804,6 +805,7 @@ export function Chip({
   role = 'button',
   disabled,
   accessibilityLabel,
+  tall,
 }: {
   label: string;
   selected?: boolean;
@@ -818,6 +820,8 @@ export function Chip({
   role?: 'button' | 'radio' | 'tab';
   disabled?: boolean;
   accessibilityLabel?: string;
+  // A full 44 pt capsule, for a chip a thumb has to hit on its own.
+  tall?: boolean;
 }) {
   const t = useTheme();
   const bg = selected ? t.accent : tone === 'danger' ? t.dangerSoft : onCard ? t.sunken : t.surface;
@@ -833,7 +837,7 @@ export function Chip({
         tap();
         onPress();
       }}
-      style={({ pressed }) => [styles.chip, { backgroundColor: bg, opacity: disabled ? 0.4 : pressed ? 0.6 : 1 }]}
+      style={({ pressed }) => [styles.chip, tall && styles.chipTall, { backgroundColor: bg, opacity: disabled ? 0.4 : pressed ? 0.6 : 1 }]}
     >
       <Text style={[type.sub, type.number, { color: fg, fontWeight: '600' }, mono && { fontFamily: MONO }]}>{label}</Text>
       {count != null ? <Text style={[type.small, type.number, { color: selected ? t.onAccent : t.muted }]}>{count.toLocaleString('en-GB')}</Text> : null}
@@ -855,6 +859,7 @@ export function Chips<T extends string>({
   style,
   role = 'button',
   disabled,
+  tall,
 }: {
   options: { id: T; label: string; count?: number }[];
   value: T;
@@ -865,9 +870,10 @@ export function Chips<T extends string>({
   style?: ViewStyle;
   role?: 'button' | 'radio';
   disabled?: boolean;
+  tall?: boolean;
 }) {
   const chips = options.map((o) => (
-    <Chip key={o.id || 'none'} label={o.label} count={o.count} selected={o.id === value} onCard={onCard} role={role} disabled={disabled} onPress={() => onPick(o.id)} />
+    <Chip key={o.id || 'none'} label={o.label} count={o.count} selected={o.id === value} onCard={onCard} role={role} disabled={disabled} tall={tall} onPress={() => onPick(o.id)} />
   ));
   if (scroll) {
     return (
@@ -937,23 +943,25 @@ export function Segmented<T extends string>({
 }
 
 // Lower and higher around a value: 2 orange-soft buttons, tap target 44 pt.
-export function Stepper({ value, onStep, disabled, width = 78 }: { value: string; onStep: (d: 1 | -1) => void; disabled?: boolean; width?: number }) {
+export function Stepper({ value, onStep, disabled, width = 78, noLower, noHigher }: { value: string; onStep: (d: 1 | -1) => void; disabled?: boolean; width?: number; noLower?: boolean; noHigher?: boolean }) {
   const t = useTheme();
-  const button = (d: 1 | -1) => (
+  const button = (d: 1 | -1) => {
+    const off = disabled || (d < 0 ? noLower : noHigher);
+    return (
     <Pressable
       accessibilityRole="button"
       accessibilityLabel={d < 0 ? 'Lower' : 'Higher'}
-      disabled={disabled}
-      hitSlop={CHIP_SLOP}
+      disabled={off}
       onPress={() => {
         tap();
         onStep(d);
       }}
-      style={({ pressed }) => [styles.stepButton, { backgroundColor: t.accentSoft, opacity: disabled ? 0.4 : pressed ? 0.6 : 1 }]}
+      style={({ pressed }) => [styles.stepButton, { backgroundColor: t.accentSoft, opacity: off ? 0.4 : pressed ? 0.6 : 1 }]}
     >
       <Text style={[type.heading, { color: t.accentText }]}>{d < 0 ? '−' : '+'}</Text>
     </Pressable>
-  );
+    );
+  };
   return (
     <View style={styles.stepper}>
       {button(-1)}
@@ -1194,6 +1202,7 @@ const styles = StyleSheet.create({
   field: { borderRadius: radius.field, paddingHorizontal: space.md, paddingVertical: 10, minHeight: 44 },
   fieldMultiline: { minHeight: 90, textAlignVertical: 'top' },
   chip: { flexDirection: 'row', alignItems: 'center', gap: 6, minHeight: 36, paddingHorizontal: 14, borderRadius: 18 },
+  chipTall: { minHeight: 44, borderRadius: 22 },
   chips: { flexDirection: 'row', flexWrap: 'wrap', gap: space.sm },
   chipScroll: { flexGrow: 0, marginBottom: space.lg },
   chipScrollContent: { gap: space.sm, paddingVertical: space.xs },
@@ -1202,7 +1211,7 @@ const styles = StyleSheet.create({
   segmentWash: { borderRadius: 8 },
   segmentBadge: { minWidth: 18, height: 18, borderRadius: 9, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 5 },
   stepper: { flexDirection: 'row', alignItems: 'center', gap: space.xs },
-  stepButton: { width: 44, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
+  stepButton: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center' },
   tick: { width: 20, alignItems: 'flex-end' },
   headerRight: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
   helpButton: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, paddingHorizontal: 5 },
