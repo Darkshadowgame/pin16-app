@@ -17,6 +17,9 @@ export interface DecodedVin {
 }
 
 const WMI: Record<string, { group: MakeGroup; brand: string; euYear?: boolean }> = {
+  // Opel and Vauxhall share these (a 2011 Corsa D scanned on 21 Nov 2026 began W0L).
+  W0L: { group: 'other', brand: 'Opel / Vauxhall' },
+  W0V: { group: 'other', brand: 'Opel / Vauxhall' },
   WVW: { group: 'vag', brand: 'Volkswagen' },
   WVG: { group: 'vag', brand: 'Volkswagen' },
   WV1: { group: 'vag', brand: 'Volkswagen Commercial' },
@@ -172,6 +175,9 @@ export function decodeVin(raw: string): DecodedVin {
     }
   }
   if (w.group === 'mazda') out.model = MAZDA_MODELS[vin.slice(3, 5)] ?? null;
+  // Opel and Vauxhall: characters 5 and 6. Only the code seen on a real car is
+  // listed (W0L0SDL..., a Corsa D; decoder lists and sale listings agree).
+  if (w.brand === 'Opel / Vauxhall' && vin.slice(4, 6) === 'SD') out.model = 'Corsa D';
   const year = modelYearFromCode(vin[9]);
   if (year) {
     out.year = year;

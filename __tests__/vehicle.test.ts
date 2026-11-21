@@ -89,3 +89,19 @@ describe('fault code library', () => {
     expect(genericAdvice('P1399')?.causes.length).toBeGreaterThan(0);
   });
 });
+
+describe('Opel and Vauxhall VINs', () => {
+  const { decodeVin } = require('../src/vehicle/vin');
+  it('names the make, model and year of a 2011 Corsa D', () => {
+    const d = decodeVin('W0L0SDL68B4000001');
+    expect(d.brand).toBe('Opel / Vauxhall');
+    expect(d.model).toBe('Corsa D');
+    expect(d.year).toBe(2011);
+    expect(d.group).toBe('other');
+  });
+  it('names the make alone when the model code is not known', () => {
+    const d = decodeVin('W0L0AHL48B4000001');
+    expect(d.brand).toBe('Opel / Vauxhall');
+    expect(d.model).toBeNull();
+  });
+});
