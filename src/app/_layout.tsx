@@ -5,16 +5,31 @@ import { SpaceGrotesk_500Medium, SpaceGrotesk_600SemiBold } from '@expo-google-f
 import { useFonts } from 'expo-font';
 import { setDisplayFontReady } from '../fonts';
 import { syncKb } from '../kb';
-import { flushOutbox } from '../share/sendBack';
+import { flushOutbox, setSendFindings } from '../share/sendBack';
 import { Platform, Pressable, Text } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
-import { SettingsProvider } from '../settings';
+import { SettingsProvider, useSettings } from '../settings';
 import { ConnectionProvider } from '../state';
 import { useIsDark, useTheme } from '../theme';
 import { GuideButton } from '../ui';
 import { GarageProvider } from '../vehicle/garage';
 // Defines the logger's GPS task at start-up (iOS can hand over positions as soon as the app opens).
 import '../logger/phoneGps';
+
+// Runs once the saved settings are read, so Send findings is known before anything is sent.
+function StartUp() {
+  const { settings, loaded } = useSettings();
+  useEffect(() => {
+    if (!loaded) return;
+    setSendFindings(settings.sendFindings !== false);
+    // New knowledge (from any install) arrives when the app opens.
+    syncKb().catch(() => undefined);
+    // Findings that could not be sent before go now (nothing goes with Send findings off).
+    flushOutbox().catch(() => undefined);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loaded]);
+  return null;
+}
 
 export default function RootLayout() {
   const t = useTheme();
@@ -24,15 +39,10 @@ export default function RootLayout() {
   useEffect(() => {
     setDisplayFontReady(!!fontsLoaded);
   }, [fontsLoaded]);
-  // New knowledge (from any install) arrives when the app opens.
-  useEffect(() => {
-    syncKb().catch(() => undefined);
-    // Findings that could not be sent before go now.
-    flushOutbox().catch(() => undefined);
-  }, []);
   return (
     <SafeAreaProvider>
       <SettingsProvider>
+      <StartUp />
       <GarageProvider>
         <ConnectionProvider>
           <StatusBar style={dark ? 'light' : 'dark'} />

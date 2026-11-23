@@ -16,7 +16,7 @@ import { toHex } from '../obd/uds';
 import { useSettings } from '../settings';
 import { canSendAutomatically, sendBack } from '../share/sendBack';
 import { useConnection } from '../state';
-import { MONO, radius, space, type, useTheme } from '../theme';
+import { MONO, onTool, radius, space, type, useTheme } from '../theme';
 import { Button, Field, GlowCard, Group, Icon, ListRow, NeedsConnection, Notice, Pill, ProgressBar, ScanPulse, Screen, success, tap, tool, TOOLS } from '../ui';
 import { useGarage, vehicleTitle } from '../vehicle/garage';
 import { SECTIONS } from '../help';
@@ -220,7 +220,7 @@ export default function Discover() {
     if (!disc) return;
     setRunning('send');
     try {
-      const r = await sendBack('discover', v.vin, { car: { title: vehicleTitle(v), brand: v.brand, model: v.model, year: v.year, platform: v.platform }, discovery: disc }, { allowManual: true, email: settings.sendTo || undefined });
+      const r = await sendBack('discover', v.vin, { car: { title: vehicleTitle(v), brand: v.brand, model: v.model, year: v.year, platform: v.platform }, discovery: disc }, { allowManual: true, manual: true, email: settings.sendTo || undefined });
       if (r.via !== 'none') update((d) => ({ ...d, sentAt: Date.now() }));
       setMessage({ tone: r.via === 'none' ? 'danger' : 'ok', text: r.detail });
       if (discRef.current) saveDiscovery(discRef.current);
@@ -287,7 +287,7 @@ export default function Discover() {
         <GlowCard tone="plain">
           <View style={styles.heroRow}>
             <View style={[styles.heroIcon, { backgroundColor: t[TOOLS.discover.colour] }]}>
-              <Icon name={TOOLS.discover.icon} size={30} color="#FFFFFF" />
+              <Icon name={TOOLS.discover.icon} size={30} color={onTool(TOOLS.discover.colour)} />
             </View>
             <View style={{ flex: 1 }}>
               <Text style={[type.title3, { color: t.text }]}>{allOlder ? 'Read every value group' : 'Explore a module’s unknown values'}</Text>
@@ -334,7 +334,7 @@ export default function Discover() {
                 iconColour={st.state === 'done' ? 'green' : st.state === 'silent' ? 'grey' : st.state === 'partial' ? 'gold' : 'indigo'}
                 title={`${def.code && group === 'vag' ? `${def.code} · ` : ''}${def.name}`}
                 subtitle={st.text}
-                right={<Icon name={shown ? 'chevron-up' : 'chevron-down'} size={13} color={t.faint} />}
+                expanded={shown} right={<Icon name={shown ? 'chevron-up' : 'chevron-down'} size={13} color={t.faint} />}
                 noChevron
                 onPress={() => setOpen(shown ? null : def.id)}
               />

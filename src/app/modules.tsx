@@ -6,7 +6,7 @@ import { ModuleDetails } from '../obd/elm';
 import { modulesFor, ROUTE_LABEL } from '../obd/modules';
 import { SECOND_BUS_NOTICE } from '../obd/msCan';
 import { useConnection } from '../state';
-import { MONO, space, type, useTheme } from '../theme';
+import { MONO, onTool, space, type, useTheme } from '../theme';
 import { Arrive, Button, Card, Group, Icon, ListRow, NeedsConnection, Notice, ScanPulse, Screen } from '../ui';
 import { useGarage } from '../vehicle/garage';
 import { SECTIONS } from '../help';
@@ -114,7 +114,7 @@ export default function Modules() {
         ) : (
           <View style={{ alignItems: 'center' }}>
             <View style={[styles.heroIcon, { backgroundColor: t.indigo }]}>
-              <Icon name="chip" size={30} color="#FFFFFF" />
+              <Icon name="chip" size={30} color={onTool('indigo')} />
             </View>
             <Text style={[type.title3, { color: t.text, marginTop: space.md, textAlign: 'center' }]}>
               {result ? `${found.length} of ${result.length} module${result.length === 1 ? '' : 's'} answered` : `${toRead} module${toRead === 1 ? '' : 's'} to read`}

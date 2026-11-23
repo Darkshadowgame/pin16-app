@@ -3,12 +3,12 @@
 // lowest/highest) and the shift light.
 import { alertBuzz } from '../sound';
 import React, { useEffect, useRef, useState } from 'react';
-import { Modal, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import Svg, { Line, Path, Polyline, Rect } from 'react-native-svg';
 import type { LivePid } from '../obd/pids';
 import { Settings, toUserUnits } from '../settings';
 import { space, type, useTheme } from '../theme';
-import { Button, Field, Group, ListRow, Notice, useReduceMotion } from '../ui';
+import { Button, Field, Group, ListRow, Notice, SheetPage, useReduceMotion } from '../ui';
 import { AlertRule, MinMax, Peak, ruleFromInput } from './alerts';
 
 // ---------------------------------------------------------------------------
@@ -139,7 +139,6 @@ export function TileSheet({
   extra?: React.ReactNode;
 }) {
   const t = useTheme();
-  const ios = Platform.OS === 'ios';
   // Keep showing the last value while the sheet slides away.
   const last = useRef({ pid: open, rule: ruleIn, minMax: minMaxIn, peak: peakIn });
   if (open) last.current = { pid: open, rule: ruleIn, minMax: minMaxIn, peak: peakIn };
@@ -171,43 +170,30 @@ export function TileSheet({
   };
 
   return (
-    <Modal visible={!!open} animationType="slide" presentationStyle={ios ? 'pageSheet' : undefined} transparent={!ios} onRequestClose={onClose}>
-      <View style={[{ flex: 1, backgroundColor: t.bg }, !ios && styles.sheetWeb]}>
-        <View style={[styles.sheetBar, { borderColor: t.border }]}>
-          <Pressable accessibilityRole="button" hitSlop={10} onPress={onClose} style={styles.barButton}>
-            <Text style={[type.body, { color: t.accentText }]}>Cancel</Text>
-          </Pressable>
-          <Text numberOfLines={1} style={[type.heading, { color: t.text, flex: 1, textAlign: 'center' }]}>
-            {pid?.label ?? ''}
-          </Text>
-          <Pressable accessibilityRole="button" hitSlop={10} onPress={save} style={[styles.barButton, { alignItems: 'flex-end' }]}>
-            <Text style={[type.body, { color: t.accentText, fontWeight: '600' }]}>Save</Text>
-          </Pressable>
-        </View>
-        <ScrollView contentContainerStyle={{ padding: space.lg, paddingBottom: 60 }} keyboardShouldPersistTaps="handled">
-          {extra}
-          <Group header="Since you opened the page" footer="The peak holds the highest reading for 3 seconds, then follows the value down.">
-            <ListRow first title="Lowest" value={minMax ? fmt(minMax.min) : 'No reading'} />
-            <ListRow title="Highest" value={minMax ? fmt(minMax.max) : 'No reading'} />
-            <ListRow title="Peak (held)" value={peak ? fmt(peak.value) : 'No reading'} />
-          </Group>
-          <Button label="Reset lowest and highest" icon="restart" variant="secondary" onPress={onResetMinMax} style={{ marginBottom: space.xl }} />
+    <SheetPage visible={!!open} title={pid?.label ?? ''} onCancel={onClose} onDone={save} doneLabel="Save">
+      <ScrollView contentContainerStyle={{ padding: space.lg, paddingBottom: 60 }} keyboardShouldPersistTaps="handled" keyboardDismissMode="interactive" automaticallyAdjustKeyboardInsets>
+        {extra}
+        <Group header="Since you opened the page" footer="The peak holds the highest reading for 3 seconds, then follows the value down.">
+          <ListRow first title="Lowest" value={minMax ? fmt(minMax.min) : 'No reading'} />
+          <ListRow title="Highest" value={minMax ? fmt(minMax.max) : 'No reading'} />
+          <ListRow title="Peak (held)" value={peak ? fmt(peak.value) : 'No reading'} />
+        </Group>
+        <Button label="Reset lowest and highest" icon="restart" variant="secondary" onPress={onResetMinMax} style={{ marginBottom: space.xl }} />
 
-          <Group
-            header="Alert"
-            footer="The tile turns red and the phone buzzes once when the value goes past a limit. Leave both limits empty for no alert."
-          >
-            <View style={{ padding: space.lg, paddingTop: space.xs }}>
-              <NumberField label={`Warn above${unit ? ` (${unit})` : ''}`} value={above} onChange={setAbove} />
-              <NumberField label={`Warn below${unit ? ` (${unit})` : ''}`} value={below} onChange={setBelow} />
-              <NumberField label="Only when engine speed is above (rpm, optional)" value={minRpm} onChange={setMinRpm} integer />
-            </View>
-          </Group>
-          {error ? <Notice tone="danger" icon="alert-circle-outline" text={error} /> : null}
-          {rule ? <Button label="Remove alert" icon="bell-off-outline" variant="danger" onPress={() => onSave(null)} /> : null}
-        </ScrollView>
-      </View>
-    </Modal>
+        <Group
+          header="Alert"
+          footer="The tile turns red and the phone buzzes once when the value goes past a limit. Leave both limits empty for no alert."
+        >
+          <View style={{ padding: space.lg, paddingTop: space.xs }}>
+            <NumberField label={`Warn above${unit ? ` (${unit})` : ''}`} value={above} onChange={setAbove} />
+            <NumberField label={`Warn below${unit ? ` (${unit})` : ''}`} value={below} onChange={setBelow} />
+            <NumberField label="Only when engine speed is above (rpm, optional)" value={minRpm} onChange={setMinRpm} integer />
+          </View>
+        </Group>
+        {error ? <Notice tone="danger" icon="alert-circle-outline" text={error} /> : null}
+        {rule ? <Button label="Remove alert" icon="bell-off-outline" variant="danger" onPress={() => onSave(null)} /> : null}
+      </ScrollView>
+    </SheetPage>
   );
 }
 
@@ -254,9 +240,6 @@ export function ShiftLight({ on }: { on: boolean }) {
 const styles = StyleSheet.create({
   barTrack: { height: 12, borderRadius: 6, overflow: 'hidden', flexDirection: 'row', marginTop: space.sm },
   barPeak: { position: 'absolute', top: 0, bottom: 0, width: 2, marginLeft: -1 },
-  sheetWeb: { marginTop: 60, borderTopLeftRadius: 14, borderTopRightRadius: 14, overflow: 'hidden' },
-  sheetBar: { flexDirection: 'row', alignItems: 'center', minHeight: 56, paddingHorizontal: space.lg, borderBottomWidth: StyleSheet.hairlineWidth },
-  barButton: { width: 80, minHeight: 44, justifyContent: 'center' },
 
   shift: { alignItems: 'center', justifyContent: 'center', zIndex: 10 },
   shiftText: { fontSize: 72, fontWeight: '800', letterSpacing: -1 },

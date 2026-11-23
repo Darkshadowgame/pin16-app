@@ -3,15 +3,16 @@ import { allowSleep, stayAwake } from '../keepAwake';
 import { backgroundNote, keepRunning, letStop } from '../background';
 import type { GpsStart } from '../logger/gps';
 import React, { useEffect, useRef, useState } from 'react';
-import { StyleSheet, Switch, Text, View } from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
 import { estimateSeconds, FULL_READ_DAYS, LEARN_ORDER, learnEstimate, learnMode, LearnStep, learnSummaryHeader, LearnSummary, runLearn, StepOutcome } from '../learn/runLearn';
 import { aboutRange, dateText, dateTimeText, leftText, shortDuration } from '../timeText';
 import { modulesText, sensorCountText } from '../vehicle/counts';
 import { sendBack } from '../share/sendBack';
+import { useSettings } from '../settings';
 import { sendLogNow, skipUnsentLog } from '../share/sendLog';
 import { useConnection } from '../state';
-import { space, type, useTheme } from '../theme';
-import { Button, GlowCard, Group, Icon, IconName, ListRow, NeedsConnection, Notice, Pill, ProgressBar, ScanPulse, Screen, success, tool, TOOLS } from '../ui';
+import { onTool, space, type, useTheme } from '../theme';
+import { Button, GlowCard, Group, Icon, IconName, ListRow, NeedsConnection, Notice, Pill, ProgressBar, ScanPulse, Screen, success, ToggleRow, tool, TOOLS } from '../ui';
 import { useGarage } from '../vehicle/garage';
 import { SECTIONS, WHAT_IS_SENT } from '../help';
 import { LeaveRunGuard } from '../leaveRun';
@@ -52,6 +53,7 @@ export default function LearnCar() {
   const t = useTheme();
   const conn = useConnection();
   const garage = useGarage();
+  const { settings } = useSettings();
   const client = conn.client;
   const v = conn.vehicle;
   const [running, setRunning] = useState<LearnStep | null>(null);
@@ -199,7 +201,7 @@ export default function LearnCar() {
       <GlowCard tone={running ? 'brand' : 'plain'} style={{ alignItems: 'center' }}>
         <ScanPulse active={!!running} size={128}>
           <View style={[styles.core, { backgroundColor: running ? t.accentSoft : t[TOOLS.learn.colour] }]}>
-            <Icon name={TOOLS.learn.icon} size={40} color={running ? t.accent : '#FFFFFF'} />
+            <Icon name={TOOLS.learn.icon} size={40} color={running ? t.accent : onTool(TOOLS.learn.colour)} />
           </View>
         </ScanPulse>
         <Text style={[type.title3, { color: t.text, marginTop: space.md, textAlign: 'center' }]}>{running ? STEPS[running].title : 'Learn my car'}</Text>
@@ -276,22 +278,13 @@ export default function LearnCar() {
         <Group
           footer={`Repeat runs keep what does not change. Switch this on to read module identities and codings, sensors, every address and values again, for example after fitting or replacing a module. Done by itself every ${FULL_READ_DAYS} days.`}
         >
-          <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: space.lg, paddingVertical: 10, gap: space.sm }}>
-            <Text style={[type.body, { color: t.text, flex: 1 }]}>Read everything again</Text>
-            <Switch accessibilityLabel="Read everything again" value={everything} onValueChange={setEverything} trackColor={{ true: t.green, false: t.sunken }} />
-          </View>
+          <ToggleRow first title="Read everything again" value={everything} onChange={setEverything} />
         </Group>
       ) : null}
 
       {!running ? (
         <Group footer={WHAT_IS_SENT}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: space.lg, paddingVertical: 10, gap: space.sm }}>
-            <View style={{ flex: 1 }}>
-              <Text style={[type.body, { color: t.text }]}>Send what this run finds</Text>
-              <Text style={[type.sub, { color: t.muted, marginTop: 2 }]}>{sendRun ? 'On: sent when the run ends' : 'Off: this run and its adapter log stay on this phone'}</Text>
-            </View>
-            <Switch accessibilityLabel="Send what this run finds" value={sendRun} onValueChange={setSendRun} trackColor={{ true: t.green, false: t.sunken }} />
-          </View>
+          <ToggleRow first title="Send what this run finds" subtitle={sendRun ? (settings.sendFindings === false ? 'On, but Send findings is off in Settings: kept on this phone' : 'On: sent when the run ends') : 'Off: this run and its adapter log stay on this phone'} value={sendRun} onChange={setSendRun} />
         </Group>
       ) : null}
 

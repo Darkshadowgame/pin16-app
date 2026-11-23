@@ -1,13 +1,16 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { usePathname } from 'expo-router';
+import { Alert } from 'react-native';
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { useSettings } from './settings';
 import { trafficLog } from './obd/trafficLog';
 import { sendLogNow, setAutoSendLog } from './share/sendLog';
+import { setSendFindings } from './share/sendBack';
 import { BleTransport } from './obd/bleTransport';
 import { ElmClient, VehicleInfo } from './obd/elm';
 import { DEMO_CARS, SimTransport } from './obd/simTransport';
 import { Transport } from './obd/transport';
+import { acceptCarVin, carMismatch, startVinCheck } from './vehicle/identity';
 import { inferredFromParts, NO_VIN, useGarage, Vehicle } from './vehicle/garage';
 import { reconnectGaveUp, Reconnecting, reconnectWait, RECONNECT_TRIES } from './reconnect';
 
@@ -29,6 +32,10 @@ interface Connection {
   vinSource: VinSource | null;
   // The owner says which car this is when the car gave no VIN.
   assignVin(vin: string): Promise<void>;
+  // Run before a write to a module. Null when it is safe; otherwise the words to
+  // show, with one tap to accept the car for this connection. A remembered or
+  // typed VIN is read from the car in the background; the write never waits.
+  verifyCar(): Promise<string | null>;
   connectDemo(carId: string): Promise<boolean>;
   connectBluetooth(id: string, name: string): Promise<boolean>;
   // The adapter used last time, for auto-connect.
@@ -66,6 +73,7 @@ export function ConnectionProvider({ children }: { children: React.ReactNode }) 
   }, []);
   useEffect(() => trafficLog.setEnabled(settings.debugLog), [settings.debugLog]);
   useEffect(() => setAutoSendLog(settings.autoSendLog !== false), [settings.autoSendLog]);
+  useEffect(() => setSendFindings(settings.sendFindings !== false), [settings.sendFindings]);
 
   const dropClient = useCallback(() => {
     clientRef.current = null;
@@ -208,6 +216,9 @@ export function ConnectionProvider({ children }: { children: React.ReactNode }) 
         setVin(saved.vin);
         setVinSource(source);
         setStatus('connected');
+        // A remembered VIN is checked against the car in the background, so the
+        // first write does not wait for it.
+        if (source === 'remembered') void startVinCheck(c);
         // How the car was identified, while it is fresh (the Cupra gave no VIN).
         if (source !== 'car') void sendLogNow(`connected, VIN from ${source}`, saved);
         return true;
@@ -255,6 +266,18 @@ export function ConnectionProvider({ children }: { children: React.ReactNode }) 
       info,
       vehicle: status === 'connected' ? (garage.get(vin) ?? null) : null,
       vinSource,
+      verifyCar: async () => {
+        const c = clientRef.current;
+        if (!c || !vin) return null;
+        const wrong = await carMismatch(c, vin, vinSource);
+        if (wrong) {
+          Alert.alert('Not the saved car', wrong, [
+            { text: 'Cancel', style: 'cancel' },
+            { text: 'This is the right car', onPress: () => acceptCarVin(c) },
+          ]);
+        }
+        return wrong;
+      },
       assignVin: async (newVin) => {
         const c = clientRef.current;
         if (!c || !info || newVin === vin) return;
@@ -280,6 +303,7 @@ export function ConnectionProvider({ children }: { children: React.ReactNode }) 
         c.rememberModules(saved.modulesSeen);
         setVin(saved.vin);
         setVinSource('owner');
+        void startVinCheck(c);
       },
       connectDemo: (carId) => byHand(async () => new SimTransport(DEMO_CARS.find((c) => c.id === carId) ?? DEMO_CARS[0])),
       connectBluetooth: async (id, name) => {

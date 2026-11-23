@@ -1,6 +1,6 @@
 import { router, useLocalSearchParams } from 'expo-router';
-import React, { useCallback, useEffect, useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 import { HISTORY_LABEL, HistoryEntry, HistoryKind, loadHistory, onHistory, removeHistory } from '../history';
 import { diffScans, previousFull } from '../diag/scanDiff';
 import { useSettings } from '../settings';
@@ -61,6 +61,19 @@ export default function History() {
     return onHistory(load);
   }, [load]);
 
+  // The comparison with the full check before each scan, worked out once per list.
+  type ScanDiff = NonNullable<ReturnType<typeof diffScans>>;
+  const diffs = useMemo(() => {
+    const m = new Map<string, { diff: ScanDiff; cleared: number }>();
+    for (const e of list ?? []) {
+      if (e.kind !== 'scan') continue;
+      const diff = diffScans(previousFull(list ?? [], e), e);
+      if (!diff) continue;
+      m.set(e.id, { diff, cleared: diff.modules.reduce((n, mod) => n + mod.cleared.length, 0) });
+    }
+    return m;
+  }, [list]);
+
   if (!vin || !v) {
     return (
       <Screen>
@@ -103,6 +116,8 @@ export default function History() {
         </Group>
       ) : null}
 
+      {list == null ? <ActivityIndicator color={t.muted} style={{ paddingVertical: space.xxl }} accessibilityLabel="Loading history" /> : null}
+
       {list && !shown.length ? (
         <View style={{ alignItems: 'center', paddingVertical: space.xxl }}>
           <Icon name="progress-clock" size={40} color={t.faint} />
@@ -116,13 +131,19 @@ export default function History() {
           {d.items.map((e, i) => {
             const expanded = open === e.id;
             // Compared with the full check before it: new, recurring and cleared.
-            const diff = e.kind === 'scan' ? diffScans(previousFull(list ?? [], e), e) : null;
+            const found = diffs.get(e.id);
+            const diff = found?.diff ?? null;
+            const goneCount = found?.cleared ?? 0;
+            // The tags and the cleared list are built for the open entry only.
             const tagOf = new Map<string, 'New' | 'Seen before'>();
-            for (const m of diff?.modules ?? []) {
-              m.added.forEach((f) => tagOf.set(`${f.module}|${f.code}`, 'New'));
-              m.recurring.forEach((f) => tagOf.set(`${f.module}|${f.code}`, 'Seen before'));
+            let gone: { module: string; code: string }[] = [];
+            if (expanded && diff) {
+              for (const m of diff.modules) {
+                m.added.forEach((f) => tagOf.set(`${f.module}|${f.code}`, 'New'));
+                m.recurring.forEach((f) => tagOf.set(`${f.module}|${f.code}`, 'Seen before'));
+              }
+              gone = diff.modules.flatMap((m) => m.cleared);
             }
-            const gone = (diff?.modules ?? []).flatMap((m) => m.cleared);
             const tag = (f: { module: string; code: string }) => tagOf.get(`${f.module}|${f.code}`);
             return (
               <Pressable
@@ -135,7 +156,7 @@ export default function History() {
                 style={({ pressed }) => [styles.entry, { borderColor: t.border, borderTopWidth: i ? StyleSheet.hairlineWidth : 0 }, pressed && { backgroundColor: t.raised }]}
               >
                 <View style={[styles.icon, { backgroundColor: t[TOOLS[KIND_TOOL[e.kind]].colour] }]}>
-                  <Icon name={TOOLS[KIND_TOOL[e.kind]].icon} size={17} color={onTool(TOOLS[KIND_TOOL[e.kind]].colour)} />
+                  <Icon name={TOOLS[KIND_TOOL[e.kind]].icon} size={17} color={onTool(TOOLS[KIND_TOOL[e.kind]].colour, t)} />
                 </View>
                 <View style={{ flex: 1 }}>
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.sm }}>
@@ -148,11 +169,11 @@ export default function History() {
                     {miles(e.odometerKm) ? ` · ${miles(e.odometerKm)}` : ''}
                   </Text>
                   {/* The title already gives the fault count; these say how it compares with the check before. */}
-                  {e.kind === 'scan' && (diff?.added || diff?.recurring || gone.length) ? (
+                  {e.kind === 'scan' && (diff?.added || diff?.recurring || goneCount) ? (
                     <View style={{ flexDirection: 'row', gap: 6, marginTop: 6, flexWrap: 'wrap' }}>
                       {diff?.added ? <Pill text={`${diff.added} new`} tone="danger" /> : null}
                       {diff?.recurring ? <Pill text={`${diff.recurring} seen before`} /> : null}
-                      {gone.length ? <Pill text={`${gone.length} cleared`} tone="ok" /> : null}
+                      {goneCount ? <Pill text={`${goneCount} cleared`} tone="ok" /> : null}
                     </View>
                   ) : null}
                   {expanded && diff ? (

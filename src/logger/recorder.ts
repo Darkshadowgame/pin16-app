@@ -5,6 +5,7 @@
 // through readMeasuringBlock. All of them only read; nothing is written to the
 // car. The loop reads as fast as the adapter answers and lets the scheduler
 // share adapter time between the sources (see scheduler.ts).
+import { sleep } from '../async';
 import type { ElmClient } from '../obd/elm';
 import { groupLabels } from '../data/groupLabels';
 import { lookupValueName } from '../data/valueNames';
@@ -18,7 +19,7 @@ import { ARMED, AutoRule, AutoState, stepAuto, TRIGGER_PID } from './auto';
 import { gpsFields, GpsSource, GpsStart } from './gps';
 import { phoneGps } from './phoneGps';
 import { formatDuration, groupKey, LogBuilder, LogChannel, logId, LogStart, LogSummary, makerKey, obdKey, sourceOf, sourcesFor, summarise } from './format';
-import { RateMeter, SampleScheduler } from './scheduler';
+import { ReadRateMeter, SampleScheduler } from './scheduler';
 import { saveLog } from './store';
 
 // ---------------------------------------------------------------------------
@@ -141,7 +142,6 @@ export function sourceLabel(id: string, options: ChannelOption[]): string {
   return o?.block ? `${o.block.def.name}, group ${o.block.group}` : 'Older VW group';
 }
 
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 export class LoggerSession {
   private status: LoggerStatus = IDLE;
@@ -163,8 +163,8 @@ export class LoggerSession {
   // After a manual stop the trigger must drop below its value once before it can start again.
   private needBelow = false;
   private scheduler: SampleScheduler | null = null;
-  private meters = new Map<string, RateMeter>();
-  private total = new RateMeter();
+  private meters = new Map<string, ReadRateMeter>();
+  private total = new ReadRateMeter();
   private last: Record<string, number> = {};
   private emitted = 0;
   private triedTp20 = false;
@@ -266,8 +266,8 @@ export class LoggerSession {
     this.startedAt = Date.now();
     this.start = start;
     this.scheduler = new SampleScheduler(sourcesFor(chosen.map((o) => o.channel.key)));
-    this.meters = new Map(this.scheduler.ids.map((id) => [id, new RateMeter()]));
-    this.total = new RateMeter();
+    this.meters = new Map(this.scheduler.ids.map((id) => [id, new ReadRateMeter()]));
+    this.total = new ReadRateMeter();
     this.last = {};
     this.auto = start === 'auto' ? { phase: 'recording', belowSince: null } : ARMED;
     this.holdGps();
@@ -411,7 +411,10 @@ export class LoggerSession {
       await this.finish('The log reached its length limit and was saved.');
       return;
     }
-    if (t1 - Math.max(this.checkpointAt, this.startedAt) >= 45000 && b.rows.length) {
+    // A checkpoint saves the whole log, so the wait grows with it: 45 seconds up
+    // to 20,000 rows, then longer, to 5 minutes near the row limit.
+    const wait = b.rows.length <= 20000 ? 45000 : 45000 + Math.round(255000 * Math.min(1, (b.rows.length - 20000) / 160000));
+    if (t1 - Math.max(this.checkpointAt, this.startedAt) >= wait && b.rows.length) {
       this.checkpointAt = t1;
       // Same id as the final save, which replaces it.
       const snap = b.finish({

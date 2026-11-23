@@ -25,11 +25,15 @@ const light = {
   muted: 'rgba(19,19,22,0.72)',
   faint: 'rgba(19,19,22,0.64)',
   border: 'rgba(19,19,22,0.14)',
+  // Boundary of a control (field, unselected chip, segmented track): 3:1 on the page and cards.
+  outline: '#7A7A84',
+  // Track of a switch that is off: 3:1 on surface.
+  switchOff: '#8E8E93',
   accent: '#E2560B',
   accentSoft: 'rgba(226,86,11,0.12)',
-  accentText: '#A63A00',
+  accentText: '#9A3500',
   onAccent: '#0A0A0A',
-  danger: '#B8123A',
+  danger: '#A00F33',
   onDanger: '#FFFFFF',
   dangerSoft: 'rgba(184,18,58,0.1)',
   ok: '#196B2D',
@@ -42,6 +46,10 @@ const light = {
   onHero: '#131316',
   onHeroMuted: 'rgba(19,19,22,0.72)',
   // Tool icon squares (glyph colour from onTool).
+  // Glyph on the red tool square.
+  onRed: '#FFFFFF',
+  // Fill of the tab badge: white on it is 6:1 in both appearances.
+  badge: '#C4112F',
   red: '#E5304F',
   blue: '#007AFF',
   green: '#34C759',
@@ -65,6 +73,8 @@ const dark: typeof light = {
   muted: '#B0B0BB',
   faint: '#9A9AA6',
   border: '#303036',
+  outline: '#7C7C88',
+  switchOff: '#6A6A74',
   accent: '#E2560B',
   accentSoft: 'rgba(226,86,11,0.2)',
   accentText: '#FF8546',
@@ -81,6 +91,8 @@ const dark: typeof light = {
   hero: '#1B1B1F',
   onHero: '#F5F5F7',
   onHeroMuted: '#B0B0BB',
+  onRed: '#0A0A0A',
+  badge: '#C4112F',
   red: '#FF5C7A',
   blue: '#0A84FF',
   green: '#30D158',
@@ -101,7 +113,9 @@ export type ToolColour = 'red' | 'blue' | 'green' | 'indigo' | 'purple' | 'teal'
 
 // The glyph on a tool square: white on the deep colours, near-black on the
 // light ones (gold, teal, green), where white would be under 3:1.
-export function onTool(colour: ToolColour): string {
+// Pass the theme where it is at hand: the red square needs a dark glyph in dark.
+export function onTool(colour: ToolColour, t?: Theme): string {
+  if (colour === 'red' && t) return t.onRed;
   return colour === 'gold' || colour === 'teal' || colour === 'green' ? '#0A0A0A' : '#FFFFFF';
 }
 
@@ -135,6 +149,8 @@ export const type = {
   // drive tool (log length, trip distance, knock retard).
   figure: { fontSize: 56, lineHeight: 62, fontWeight: '700' as const, letterSpacing: -1 },
   figureMid: { fontSize: 48, lineHeight: 56, fontWeight: '700' as const, letterSpacing: -1 },
+  // The value on a live tile.
+  tile: { fontSize: 28, lineHeight: 34, fontWeight: '700' as const, letterSpacing: -0.5 },
   number: { fontVariant: ['tabular-nums' as const] },
 };
 

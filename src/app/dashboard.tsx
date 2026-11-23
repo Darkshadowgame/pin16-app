@@ -1,7 +1,9 @@
+import { sleep } from '../async';
 import { alertBuzz } from '../sound';
 import { allowSleep, stayAwake } from '../keepAwake';
-import React, { useEffect, useRef, useState } from 'react';
-import { Modal, Platform, Pressable, ScrollView, ScrollViewInstance, StyleSheet, Text, View } from 'react-native';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { useIsFocused } from 'expo-router';
+import { Pressable, ScrollView, ScrollViewInstance, StyleSheet, Text, View } from 'react-native';
 import { SECTIONS } from '../help';
 import { addMinMax, AlertLevel, alertLevel, AlertRule, AlertTracker, holdPeak, MinMax, needsRpm, Peak, setRule } from '../live/alerts';
 import { addPage, DashPage, fraction, MAX_PAGES, MAX_TILES, pagesForCar, rangeFor, removePage, resizePage, SHIFT_MAX_RPM, SHIFT_MIN_RPM, shiftLabel, shiftLightOn, shiftRpmFrom, TILE_STYLES, TileStyle, updatePage } from '../live/dashboards';
@@ -11,7 +13,7 @@ import { DEFAULT_WATCH, LivePid, PID_GROUPS, pidInfo } from '../obd/pids';
 import { Settings, tempIn, toUserUnits, useSettings } from '../settings';
 import { useConnection } from '../state';
 import { radius, space, type, useTheme } from '../theme';
-import { Button, Chips, ConfirmSheet, Field, Group, HelpButton, Icon, IconName, ListRow, NeedsConnection, Notice, Screen, SearchField, Segmented } from '../ui';
+import { Button, Chips, ConfirmSheet, Field, Group, HelpButton, Icon, IconName, ListRow, NeedsConnection, Notice, Screen, SearchField, Segmented, SheetPage } from '../ui';
 import { filterPids } from '../live/sets';
 import { useGarage } from '../vehicle/garage';
 import { useDisplay } from '../fonts';
@@ -48,7 +50,6 @@ export function dashAlerts(coolantC: number | null, rpm: number | null, volts: n
 // Shown in the gauge picker: which values a gauge takes, and where the others are.
 export const GAUGE_VALUES_NOTE = 'Gauges take standard values. Maker values and older VW value groups are in Live data and the Data logger.';
 
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 interface Stats {
   mm: MinMax;
@@ -60,11 +61,15 @@ export default function Dashboard() {
   const conn = useConnection();
   const garage = useGarage();
   const { settings } = useSettings();
+  // Off screen (another page opened on top): stop reading and let the phone sleep,
+  // so the page on top gets the adapter to itself, as Live data does.
+  const onScreen = useIsFocused();
   // Screen stays on while this page is open (guarded: the web preview may refuse).
   useEffect(() => {
+    if (!onScreen) return undefined;
     stayAwake('dashboard');
     return () => allowSleep('dashboard');
-  }, []);
+  }, [onScreen]);
   const [available, setAvailable] = useState<LivePid[] | null>(null);
   const [pages, setPages] = useState<DashPage[]>([]);
   const [pageIdx, setPageIdx] = useState(0);
@@ -129,7 +134,7 @@ export default function Dashboard() {
   // light or an engine speed alert needs it.
   useEffect(() => {
     const client = conn.client;
-    if (!client || !available) return;
+    if (!client || !available || !onScreen) return;
     const byPid = new Map(available.map((p) => [p.pid, p]));
     let running = true;
     let lastVolts = 0;
@@ -189,7 +194,7 @@ export default function Dashboard() {
     return () => {
       running = false;
     };
-  }, [conn.client, available]);
+  }, [conn.client, available, onScreen]);
 
   const alerts = dashAlerts(values[COOLANT] ?? null, values[RPM] ?? null, volts, settings.temp);
   const alertKey = alerts.map((a) => a.key).join(',');
@@ -217,6 +222,13 @@ export default function Dashboard() {
   const page = pages[pageIdx] ?? pages[0];
   const shiftOn = shiftLightOn(values[RPM], shiftRpm, shiftWas.current);
   shiftWas.current = shiftOn;
+  const openTilePicker = useCallback((pi: number, i: number) => {
+    setPageIdx(pi);
+    setPicking(i);
+  }, []);
+  const openTileSheet = useCallback((p: LivePid | undefined) => {
+    if (p) setTileSheet(p);
+  }, []);
   const goTo = (i: number) => {
     setPageIdx(i);
     pager.current?.scrollTo({ x: i * width, animated: true });
@@ -267,17 +279,16 @@ export default function Dashboard() {
                         supported={supportedIds.has(pid)}
                         tileStyle={pg.style}
                         value={values[pid] ?? null}
-                        points={hist[pid] ?? []}
+                        points={hist[pid] ?? NO_POINTS}
                         stats={stats[pid]}
                         level={level}
                         hot={pid === COOLANT && (values[pid] ?? 0) > COOLANT_MAX_C}
                         hud={hud}
                         settings={settings}
-                        onPress={() => {
-                          setPageIdx(pi);
-                          setPicking(i);
-                        }}
-                        onLongPress={() => p && setTileSheet(p)}
+                        pi={pi}
+                        index={i}
+                        onPress={openTilePicker}
+                        onLongPress={openTileSheet}
                       />
                     );
                   })}
@@ -380,7 +391,9 @@ export default function Dashboard() {
   );
 }
 
-function DashTile({
+const NO_POINTS: number[] = [];
+
+const DashTile = React.memo(function DashTile({
   p,
   supported,
   tileStyle,
@@ -391,6 +404,8 @@ function DashTile({
   hot,
   hud,
   settings,
+  pi,
+  index,
   onPress,
   onLongPress,
 }: {
@@ -404,8 +419,10 @@ function DashTile({
   hot: boolean;
   hud: boolean;
   settings: Settings;
-  onPress: () => void;
-  onLongPress: () => void;
+  pi: number;
+  index: number;
+  onPress: (pi: number, index: number) => void;
+  onLongPress: (p: LivePid | undefined) => void;
 }) {
   const t = useTheme();
   const displayFont = useDisplay();
@@ -425,8 +442,8 @@ function DashTile({
     <Pressable
       accessibilityRole="button"
       accessibilityLabel={`${p?.label ?? 'Gauge'} ${text === '–' ? 'no reading' : `${text} ${unit}`}${warn ? ', past the alert limit' : ''}. Tap to change, press and hold for alerts.`}
-      onPress={onPress}
-      onLongPress={onLongPress}
+      onPress={() => onPress(pi, index)}
+      onLongPress={() => onLongPress(p)}
       style={({ pressed }) => [
         styles.gauge,
         { backgroundColor: hud ? '#000000' : warn ? t.dangerSoft : pressed ? t.raised : t.surface },
@@ -454,7 +471,7 @@ function DashTile({
       )}
     </Pressable>
   );
-}
+});
 
 // Edit the page on screen: name, tile style, number of tiles; add or delete pages.
 function PageSheet({
@@ -475,7 +492,6 @@ function PageSheet({
   onDelete: () => void;
 }) {
   const t = useTheme();
-  const ios = Platform.OS === 'ios';
   const [name, setName] = useState(page.name);
   const [style, setStyle] = useState<TileStyle>(page.style);
   const [count, setCount] = useState(page.pids.length);
@@ -491,56 +507,44 @@ function PageSheet({
   }, [visible]);
   const done = () => onClose({ name: name.trim(), style, count });
   return (
-    <Modal visible={visible} animationType="slide" presentationStyle={ios ? 'pageSheet' : undefined} transparent={!ios} onRequestClose={() => onClose(null)}>
-      <View style={[{ flex: 1, backgroundColor: t.bg }, !ios && styles.sheetWeb]}>
-        <View style={[styles.sheetBar, { borderColor: t.border }]}>
-          <Pressable accessibilityRole="button" hitSlop={10} onPress={() => onClose(null)} style={styles.barButton}>
-            <Text style={[type.body, { color: t.accentText }]}>Cancel</Text>
-          </Pressable>
-          <Text style={[type.heading, { color: t.text, flex: 1, textAlign: 'center' }]}>Edit page</Text>
-          <Pressable accessibilityRole="button" hitSlop={10} onPress={done} style={[styles.barButton, { alignItems: 'flex-end' }]}>
-            <Text style={[type.body, { color: t.accentText, fontWeight: '600' }]}>Done</Text>
-          </Pressable>
-        </View>
-        <ScrollView contentContainerStyle={{ padding: space.lg, paddingBottom: 60 }} keyboardShouldPersistTaps="handled">
-          <Group header="Page" help={SECTIONS.liveDashPages}>
-            <View style={{ padding: space.lg }}>
-              <Field label="Name" value={name} onChange={setName} maxLength={20} accessibilityLabel="Page name" />
-              <Text style={[type.small, { color: t.muted, marginBottom: space.xs, marginTop: space.md }]}>Gauge style</Text>
-              <Segmented role="radio" label="Gauge style" options={TILE_STYLES} value={style} onPick={setStyle} />
-              <Text style={[type.small, { color: t.muted, marginBottom: space.xs, marginTop: space.md }]}>Gauges</Text>
-              <View style={styles.stepper}>
-                <Button label="−" variant="secondary" onPress={() => setCount((c) => Math.max(1, c - 1))} disabled={count <= 1} />
-                <Text style={[type.title3, type.number, { color: t.text, minWidth: 60, textAlign: 'center' }]}>{count}</Text>
-                <Button label="+" variant="secondary" onPress={() => setCount((c) => Math.min(MAX_TILES, c + 1))} disabled={count >= MAX_TILES} />
-              </View>
+    <SheetPage visible={visible} title="Edit page" onCancel={() => onClose(null)} onDone={done}>
+      <ScrollView contentContainerStyle={{ padding: space.lg, paddingBottom: 60 }} keyboardShouldPersistTaps="handled" keyboardDismissMode="interactive" automaticallyAdjustKeyboardInsets>
+        <Group header="Page" help={SECTIONS.liveDashPages}>
+          <View style={{ padding: space.lg }}>
+            <Field label="Name" value={name} onChange={setName} maxLength={20} accessibilityLabel="Page name" />
+            <Text style={[type.small, { color: t.muted, marginBottom: space.xs, marginTop: space.md }]}>Gauge style</Text>
+            <Segmented role="radio" label="Gauge style" options={TILE_STYLES} value={style} onPick={setStyle} />
+            <Text style={[type.small, { color: t.muted, marginBottom: space.xs, marginTop: space.md }]}>Gauges</Text>
+            <View style={styles.stepper}>
+              <Button label="−" variant="secondary" onPress={() => setCount((c) => Math.max(1, c - 1))} disabled={count <= 1} />
+              <Text style={[type.title3, type.number, { color: t.text, minWidth: 60, textAlign: 'center' }]}>{count}</Text>
+              <Button label="+" variant="secondary" onPress={() => setCount((c) => Math.min(MAX_TILES, c + 1))} disabled={count >= MAX_TILES} />
             </View>
-          </Group>
-          <View style={{ gap: space.sm }}>
-            {canAdd ? <Button label="Add a page" icon="plus" variant="secondary" onPress={onAdd} /> : null}
-            {canDelete ? <Button label="Delete this page" icon="trash-can-outline" variant="danger" onPress={() => setConfirmDelete(true)} /> : null}
           </View>
-        </ScrollView>
-        <ConfirmSheet
-          visible={confirmDelete}
-          title="Delete this page?"
-          lines={[`${page.name}, with its ${page.pids.length} gauge${page.pids.length === 1 ? '' : 's'}. This cannot be undone.`]}
-          confirmLabel="Delete"
-          onCancel={() => setConfirmDelete(false)}
-          onConfirm={() => {
-            setConfirmDelete(false);
-            onDelete();
-          }}
-        />
-      </View>
-    </Modal>
+        </Group>
+        <View style={{ gap: space.sm }}>
+          {canAdd ? <Button label="Add a page" icon="plus" variant="secondary" onPress={onAdd} /> : null}
+          {canDelete ? <Button label="Delete this page" icon="trash-can-outline" variant="danger" onPress={() => setConfirmDelete(true)} /> : null}
+        </View>
+      </ScrollView>
+      <ConfirmSheet
+        visible={confirmDelete}
+        title="Delete this page?"
+        lines={[`${page.name}, with its ${page.pids.length} gauge${page.pids.length === 1 ? '' : 's'}. This cannot be undone.`]}
+        confirmLabel="Delete"
+        onCancel={() => setConfirmDelete(false)}
+        onConfirm={() => {
+          setConfirmDelete(false);
+          onDelete();
+        }}
+      />
+    </SheetPage>
   );
 }
 
 // The shift light for this car: the engine speed at which the screen flashes.
 function ShiftSheet({ visible, shiftRpm, onClose }: { visible: boolean; shiftRpm: number; onClose: (shift: number | null) => void }) {
   const t = useTheme();
-  const ios = Platform.OS === 'ios';
   const [shift, setShift] = useState(shiftRpm ? String(shiftRpm) : '');
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
@@ -559,27 +563,16 @@ function ShiftSheet({ visible, shiftRpm, onClose }: { visible: boolean; shiftRpm
     onClose(s);
   };
   return (
-    <Modal visible={visible} animationType="slide" presentationStyle={ios ? 'pageSheet' : undefined} transparent={!ios} onRequestClose={() => onClose(null)}>
-      <View style={[{ flex: 1, backgroundColor: t.bg }, !ios && styles.sheetWeb]}>
-        <View style={[styles.sheetBar, { borderColor: t.border }]}>
-          <Pressable accessibilityRole="button" hitSlop={10} onPress={() => onClose(null)} style={styles.barButton}>
-            <Text style={[type.body, { color: t.accentText }]}>Cancel</Text>
-          </Pressable>
-          <Text style={[type.heading, { color: t.text, flex: 1, textAlign: 'center' }]}>Shift light</Text>
-          <Pressable accessibilityRole="button" hitSlop={10} onPress={done} style={[styles.barButton, { alignItems: 'flex-end' }]}>
-            <Text style={[type.body, { color: t.accentText, fontWeight: '600' }]}>Done</Text>
-          </Pressable>
-        </View>
-        <ScrollView contentContainerStyle={{ padding: space.lg, paddingBottom: 60 }} keyboardShouldPersistTaps="handled">
-          <Group header="Flash at" help={SECTIONS.liveShift} footer="The whole screen flashes red at this engine speed, on every page of this car. Leave it empty for no shift light.">
-            <View style={{ padding: space.lg, paddingTop: 0 }}>
-              <NumberField label="Engine speed (rpm)" value={shift} onChange={setShift} integer />
-            </View>
-          </Group>
-          {error ? <Notice tone="danger" icon="alert-circle-outline" text={error} /> : null}
-        </ScrollView>
-      </View>
-    </Modal>
+    <SheetPage visible={visible} title="Shift light" onCancel={() => onClose(null)} onDone={done}>
+      <ScrollView contentContainerStyle={{ padding: space.lg, paddingBottom: 60 }} keyboardShouldPersistTaps="handled" keyboardDismissMode="interactive" automaticallyAdjustKeyboardInsets>
+        <Group header="Flash at" help={SECTIONS.liveShift} footer="The whole screen flashes red at this engine speed, on every page of this car. Leave it empty for no shift light.">
+          <View style={{ padding: space.lg, paddingTop: 0 }}>
+            <NumberField label="Engine speed (rpm)" value={shift} onChange={setShift} integer />
+          </View>
+        </Group>
+        {error ? <Notice tone="danger" icon="alert-circle-outline" text={error} /> : null}
+      </ScrollView>
+    </SheetPage>
   );
 }
 
@@ -598,7 +591,6 @@ function PidPicker({
   onClose: (pid: number | null) => void;
 }) {
   const t = useTheme();
-  const ios = Platform.OS === 'ios';
   const [query, setQuery] = useState('');
   useEffect(() => {
     if (visible) setQuery('');
@@ -606,52 +598,43 @@ function PidPicker({
   const matches = filterPids(available, query);
   const now = current != null ? available.find((p) => p.pid === current) : undefined;
   return (
-    <Modal visible={visible} animationType="slide" presentationStyle={ios ? 'pageSheet' : undefined} transparent={!ios} onRequestClose={() => onClose(null)}>
-      <View style={[{ flex: 1, backgroundColor: t.bg }, !ios && styles.sheetWeb]}>
-        <View style={[styles.sheetBar, { borderColor: t.border }]}>
-          <Pressable accessibilityRole="button" hitSlop={10} onPress={() => onClose(null)} style={styles.barButton}>
-            <Text style={[type.body, { color: t.accentText }]}>Cancel</Text>
-          </Pressable>
-          <Text style={[type.heading, { color: t.text, flex: 1, textAlign: 'center' }]}>Choose a value</Text>
-          <View style={styles.barButton} />
-        </View>
-        <ScrollView contentContainerStyle={{ padding: space.lg, paddingBottom: 60 }} keyboardShouldPersistTaps="handled">
-          {now ? (
-            <Group header="This gauge">
-              <ListRow first icon={'bell-outline' as IconName} iconColour="red" title="Alerts and lowest and highest" subtitle={now.label} onPress={() => onAlerts(now)} />
+    <SheetPage visible={visible} title="Choose a value" onCancel={() => onClose(null)}>
+      <ScrollView contentContainerStyle={{ padding: space.lg, paddingBottom: 60 }} keyboardShouldPersistTaps="handled" keyboardDismissMode="interactive" automaticallyAdjustKeyboardInsets>
+        {now ? (
+          <Group header="This gauge">
+            <ListRow first icon={'bell-outline' as IconName} iconColour="red" title="Alerts and lowest and highest" subtitle={now.label} onPress={() => onAlerts(now)} />
+          </Group>
+        ) : null}
+        {available.length ? (
+          <View style={{ marginBottom: space.lg }}>
+            <SearchField value={query} onChange={setQuery} placeholder="Search values" caps={false} />
+          </View>
+        ) : null}
+        {/* What a gauge can show, said where the choice is made. */}
+        <Text style={[type.small, { color: t.muted, marginBottom: space.lg }]}>{GAUGE_VALUES_NOTE}</Text>
+        {!available.length ? <Notice text="The car did not report any standard live values." /> : null}
+        {available.length && !matches.length ? <Notice text="No value matches. Try another word, for example speed, fuel or temp." /> : null}
+        {PID_GROUPS.map((g) => {
+          const items = matches.filter((p) => p.group === g);
+          if (!items.length) return null;
+          return (
+            <Group key={g} header={g}>
+              {items.map((p, i) => (
+                <ListRow
+                  key={p.pid}
+                  first={i === 0}
+                  title={p.label}
+                  value={p.unit}
+                  noChevron
+                  selected={p.pid === current}
+                  onPress={() => onClose(p.pid)}
+                />
+              ))}
             </Group>
-          ) : null}
-          {available.length ? (
-            <View style={{ marginBottom: space.lg }}>
-              <SearchField value={query} onChange={setQuery} placeholder="Search values" caps={false} />
-            </View>
-          ) : null}
-          {/* What a gauge can show, said where the choice is made. */}
-          <Text style={[type.small, { color: t.muted, marginBottom: space.lg }]}>{GAUGE_VALUES_NOTE}</Text>
-          {!available.length ? <Notice text="The car did not report any standard live values." /> : null}
-          {available.length && !matches.length ? <Notice text="No value matches. Try another word, for example speed, fuel or temp." /> : null}
-          {PID_GROUPS.map((g) => {
-            const items = matches.filter((p) => p.group === g);
-            if (!items.length) return null;
-            return (
-              <Group key={g} header={g}>
-                {items.map((p, i) => (
-                  <ListRow
-                    key={p.pid}
-                    first={i === 0}
-                    title={p.label}
-                    value={p.unit}
-                    noChevron
-                    selected={p.pid === current}
-                    onPress={() => onClose(p.pid)}
-                  />
-                ))}
-              </Group>
-            );
-          })}
-        </ScrollView>
-      </View>
-    </Modal>
+          );
+        })}
+      </ScrollView>
+    </SheetPage>
   );
 }
 
@@ -670,9 +653,6 @@ const styles = StyleSheet.create({
   gaugeLabel: { minHeight: 40 },
   dialFigure: { textAlign: 'center' },
   rateRow: { flexDirection: 'row', alignItems: 'center', gap: space.sm, marginTop: space.md },
-  sheetWeb: { marginTop: 60, borderTopLeftRadius: 14, borderTopRightRadius: 14, overflow: 'hidden' },
-  sheetBar: { flexDirection: 'row', alignItems: 'center', minHeight: 56, paddingHorizontal: space.lg, borderBottomWidth: StyleSheet.hairlineWidth },
-  barButton: { width: 80, minHeight: 44, justifyContent: 'center' },
 
   stepper: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: space.sm },
 });

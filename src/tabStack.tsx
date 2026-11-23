@@ -17,7 +17,7 @@ export function TabStack() {
         headerShown: Platform.OS !== 'web',
         ...(Platform.OS === 'ios'
           ? {
-              headerLargeTitle: true,
+              headerLargeTitleEnabled: true,
               headerTransparent: true,
               headerBlurEffect: dark ? ('systemChromeMaterialDark' as const) : ('systemChromeMaterialLight' as const),
               headerLargeStyle: { backgroundColor: 'transparent' },

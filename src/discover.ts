@@ -160,17 +160,31 @@ export const rangeSize = (r: [number, number][]) => r.reduce((n, [a, b]) => n + 
 
 const key = (vin: string) => `caristini.discover.${vin}`;
 
+// Cars whose stored discovery could not be read: nothing is saved for them
+// until a read works, so the stored result is not written over by an empty one.
+const unreadable = new Set<string>();
+
 export async function loadDiscovery(vin: string): Promise<Discovery> {
   try {
     const raw = await AsyncStorage.getItem(key(vin));
-    if (raw) return JSON.parse(raw) as Discovery;
+    unreadable.delete(vin);
+    if (raw) {
+      try {
+        return JSON.parse(raw) as Discovery;
+      } catch {
+        // Kept aside before the unparsable text counts as nothing stored.
+        await AsyncStorage.setItem(`${key(vin)}.damaged`, raw).catch(() => undefined);
+      }
+    }
   } catch {
-    // fall through
+    // A failed read is not "nothing stored".
+    unreadable.add(vin);
   }
   return { vin, started: Date.now(), updated: Date.now(), modules: {} };
 }
 
 export async function saveDiscovery(d: Discovery): Promise<void> {
+  if (unreadable.has(d.vin)) return;
   try {
     await AsyncStorage.setItem(key(d.vin), JSON.stringify({ ...d, updated: Date.now() }));
   } catch {

@@ -1,5 +1,6 @@
 // Car diary: service and repair log, stored on the phone.
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { isList, readJsonStrict } from './storageRead';
 
 export interface DiaryEntry {
   id: string;
@@ -21,33 +22,54 @@ export const DIARY_KINDS = ['Oil service', 'Inspection', 'Service reset', 'Fault
 
 const KEY = 'gauge.diary.v1';
 
+// Throws when the read fails, so a writer can tell that from an empty diary.
+async function readDiary(): Promise<DiaryEntry[]> {
+  return readJsonStrict<DiaryEntry[]>(KEY, () => [], isList);
+}
+
 export async function loadDiary(): Promise<DiaryEntry[]> {
   try {
-    const raw = await AsyncStorage.getItem(KEY);
-    const list = raw ? (JSON.parse(raw) as DiaryEntry[]) : [];
+    const list = await readDiary();
     return list.sort((a, b) => b.date.localeCompare(a.date));
   } catch {
     return [];
   }
 }
 
-export async function addDiary(entry: Omit<DiaryEntry, 'id'>): Promise<void> {
-  const list = await loadDiary();
-  const next = [{ ...entry, id: `${Date.now()}-${Math.round(Math.random() * 1e6)}` }, ...list];
-  try {
-    await AsyncStorage.setItem(KEY, JSON.stringify(next));
-  } catch {
-    // Storage unavailable (for example a private browser window).
-  }
+// Diary changes run one after another, so two quick ones cannot undo each other.
+let diaryTail: Promise<unknown> = Promise.resolve();
+function inTurn<T>(job: () => Promise<T>): Promise<T> {
+  const run = diaryTail.then(job, job);
+  diaryTail = run.catch(() => undefined);
+  return run;
 }
 
-export async function removeDiary(id: string): Promise<void> {
-  const list = await loadDiary();
-  try {
-    await AsyncStorage.setItem(KEY, JSON.stringify(list.filter((e) => e.id !== id)));
-  } catch {
-    // ignore
-  }
+// Resolves true when the entry was saved. False means it was not: the stored
+// diary could not be read, or storage refused the write. Nothing is written
+// over the saved diary then.
+export function addDiary(entry: Omit<DiaryEntry, 'id'>): Promise<boolean> {
+  return inTurn(async () => {
+    try {
+      const list = await readDiary();
+      const next = [{ ...entry, id: `${Date.now()}-${Math.round(Math.random() * 1e6)}` }, ...list];
+      await AsyncStorage.setItem(KEY, JSON.stringify(next));
+      return true;
+    } catch {
+      return false;
+    }
+  });
+}
+
+export function removeDiary(id: string): Promise<boolean> {
+  return inTurn(async () => {
+    try {
+      const list = await readDiary();
+      await AsyncStorage.setItem(KEY, JSON.stringify(list.filter((e) => e.id !== id)));
+      return true;
+    } catch {
+      return false;
+    }
+  });
 }
 
 export function today(): string {

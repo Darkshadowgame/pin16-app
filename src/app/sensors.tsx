@@ -11,11 +11,10 @@ import { useSettings } from '../settings';
 import { sendBack } from '../share/sendBack';
 import { sendLogNow } from '../share/sendLog';
 import { useConnection } from '../state';
-import { MONO, radius, space, type, useTheme } from '../theme';
-import { Button, GlowCard, Group, Icon, IconName, ListRow, NeedsConnection, Notice, Pill, ProgressBar, ScanPulse, Screen, SearchField, success, tap, TOOLS } from '../ui';
+import { MONO, onTool, radius, space, type, useTheme } from '../theme';
+import { Button, GlowCard, Group, Icon, IconName, ListRow, NeedsConnection, Notice, Pill, ProgressBar, ScanPulse, Screen, SearchField, success, tap, Toggle, TOOLS } from '../ui';
 import { useGarage } from '../vehicle/garage';
 import { quickRows, remainingRows, sharedSensorKeys } from '../obd/sharedSensors';
-import { Switch } from 'react-native';
 import { SECTIONS } from '../help';
 import { LeaveRunGuard } from '../leaveRun';
 import { aboutRange, dateText } from '../timeText';
@@ -239,11 +238,10 @@ export default function Sensors() {
                 <Text style={[type.body, { color: t.text }]}>{nameOf(h)}</Text>
                 <Text style={[type.small, { color: t.muted }]}>{`${n.toLocaleString('en-GB')} sensor${n === 1 ? '' : 's'} · ${h}`}</Text>
               </View>
-              <Switch
-                accessibilityLabel={`Search ${nameOf(h)}`}
-                trackColor={{ true: t.green, false: t.sunken }}
+              <Toggle
+                label={`Search ${nameOf(h)}`}
                 value={!off.has(h)}
-                onValueChange={(on) =>
+                onChange={(on) =>
                   setOff((old) => {
                     const next = new Set(old);
                     if (on) next.delete(h);
@@ -329,7 +327,7 @@ export default function Sensors() {
         <GlowCard tone="plain">
           <View style={styles.heroRow}>
             <View style={[styles.heroIcon, { backgroundColor: t[TOOLS.sensors.colour] }]}>
-              <Icon name={TOOLS.sensors.icon} size={30} color="#FFFFFF" />
+              <Icon name={TOOLS.sensors.icon} size={30} color={onTool(TOOLS.sensors.colour)} />
             </View>
             <View style={{ flex: 1 }}>
               <Text style={[type.title3, { color: t.text }]}>Find my car’s sensors</Text>

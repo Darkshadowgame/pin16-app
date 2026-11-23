@@ -1,6 +1,6 @@
 import { router } from 'expo-router';
 import React, { useEffect, useState } from 'react';
-import { Linking, Share, StyleSheet, Switch, Text, View } from 'react-native';
+import { Linking, Share, StyleSheet, Text, View } from 'react-native';
 import * as Updates from 'expo-updates';
 import { getOwnSecret, isBuiltIn, SecretName, setSecret } from '../share/secrets';
 import { canSendAutomatically, flushOutbox, outbox, sendBack, shareOutbox } from '../share/sendBack';
@@ -15,7 +15,7 @@ import { playSound, setAlertSounds } from '../sound';
 import { useConnection } from '../state';
 import { radius, space, type, useTheme } from '../theme';
 import { Help, SECTIONS, WHAT_IS_SENT } from '../help';
-import { TOOLS, Button, Field, Group, ListRow, Notice, Screen, ConfirmSheet, tool } from '../ui';
+import { TOOLS, Button, Field, Group, ListRow, Notice, Screen, ConfirmSheet, ToggleRow, tool } from '../ui';
 import { dateTimeText } from '../timeText';
 
 export default function SettingsScreen({ title, guide }: { title?: string; guide?: Help } = {}) {
@@ -47,13 +47,7 @@ export default function SettingsScreen({ title, guide }: { title?: string; guide
 
   const [logNote, setLogNote] = useState<string | null>(null);
   const toggle = (label: string, value: boolean, onChange: (v: boolean) => void, sub?: string, first?: boolean) => (
-    <View style={[styles.row, { borderColor: t.border, borderTopWidth: first ? 0 : StyleSheet.hairlineWidth }]}>
-      <View style={{ flex: 1 }}>
-        <Text style={[type.body, { color: t.text }]}>{label}</Text>
-        {sub ? <Text style={[type.sub, { color: t.muted, marginTop: 2 }]}>{sub}</Text> : null}
-      </View>
-      <Switch value={value} onValueChange={onChange} trackColor={{ true: t.green, false: t.sunken }} accessibilityLabel={label} />
-    </View>
+    <ToggleRow title={label} subtitle={sub} value={value} onChange={onChange} first={first} />
   );
 
   const rt = report?.roundTrip;
@@ -162,7 +156,8 @@ export default function SettingsScreen({ title, guide }: { title?: string; guide
       {/* Developer controls are hidden by default. Hiding them changes
           nothing: findings and logs are sent the same way either way. */}
       <Group header="What leaves this phone" help={SECTIONS.settingsSending} footer={WHAT_IS_SENT}>
-        {toggle('Developer options', settings.developer, (v) => set({ developer: v }), 'GitHub token, email, app version and findings waiting to send', true)}
+        {toggle('Send findings', settings.sendFindings !== false, (v) => set({ sendFindings: v }), 'Sensors found, Learn my car results, Listen recordings, named values. Off: nothing is sent unless you tap Send', true)}
+        {toggle('Developer options', settings.developer, (v) => set({ developer: v }), 'GitHub token, email, app version and findings waiting to send')}
       </Group>
 
       {settings.developer ? (
@@ -303,7 +298,7 @@ function OutboxRows() {
           waiting
             ? () =>
                 run(async () => {
-                  const r = await flushOutbox();
+                  const r = await flushOutbox(true);
                   return r.left ? `${r.sent} sent, ${r.left} still waiting: ${r.error}` : `${r.sent} sent.`;
                 })
             : undefined
@@ -335,7 +330,7 @@ function OutboxRows() {
                   ids: v.ids,
                   // Values found by Discover and Learn my car, kept in their own store.
                   discovery: await loadDiscovery(v.vin).catch(() => null),
-                });
+                }, { manual: true });
                 out.push(`${v.nickname || v.model || v.brand}: ${r.via === 'github' ? 'sent' : 'saved to send later'}`);
               }
               return out.join('. ') + '.';

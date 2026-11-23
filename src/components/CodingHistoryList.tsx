@@ -58,7 +58,7 @@ export function CodingHistoryList({ entries, currentHex, busy, onPutBack }: { en
                 <Text style={[type.small, { color: t.muted, marginTop: space.xs }]}>{block}</Text>
               ) : (
                 <View style={{ marginTop: space.sm, alignSelf: 'flex-start' }}>
-                  <Button label="Put back this coding" variant="secondary" compact disabled={busy} onPress={() => onPutBack(e)} />
+                  <Button label="Put back this coding" accessibilityLabel={`Put back this coding, ${date} ${time}`} variant="secondary" compact disabled={busy} onPress={() => onPutBack(e)} />
                 </View>
               )
             ) : null}

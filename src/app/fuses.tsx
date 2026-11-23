@@ -87,7 +87,7 @@ export default function Fuses() {
             iconColour="grey"
             title="Notes on this list"
             subtitle={notes ? undefined : `${car.caveats.length} note${car.caveats.length === 1 ? '' : 's'} on where this list comes from and where it may differ`}
-            right={<Icon name={notes ? 'chevron-up' : 'chevron-down'} size={13} color={t.faint} />}
+            expanded={notes} right={<Icon name={notes ? 'chevron-up' : 'chevron-down'} size={13} color={t.faint} />}
             noChevron
             onPress={() => setNotes(!notes)}
           />

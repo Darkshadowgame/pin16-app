@@ -1,6 +1,6 @@
-import { router } from 'expo-router';
+import { router, Stack } from 'expo-router';
 import React, { useMemo, useState } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { Platform, StyleSheet, Text, View } from 'react-native';
 import { codeAnatomy, DTC_LIBRARY, searchDtc } from '../../../data/dtcLibrary';
 import { vagFaultText } from '../../../data/vagFaults';
 import { faultMeaning, sentenceCase } from '../../../diag/faults';
@@ -31,7 +31,12 @@ export default function Lookup() {
 
   return (
     <Screen title="Lookup" guide={GUIDES.lookup}>
-      <SearchField value={q} onChange={setQ} placeholder="Code or keyword, like P0171 or DPF" />
+      {/* iPhone: the search bar of the native header. Elsewhere the field sits in the page. */}
+      {Platform.OS === 'ios' ? (
+        <Stack.SearchBar placeholder="Code or keyword, like P0171 or DPF" autoCapitalize="characters" onChangeText={(e) => setQ(e.nativeEvent.text)} />
+      ) : (
+        <SearchField value={q} onChange={setQ} placeholder="Code or keyword, like P0171 or DPF" />
+      )}
       {/* At the 16 pt inset of the section headers below. */}
       <Text style={[type.small, type.number, { color: t.muted, marginTop: space.sm, marginHorizontal: space.lg }]}>
         {DTC_LIBRARY.length.toLocaleString('en-GB')} codes with likely causes and fixes, offline.
@@ -45,7 +50,7 @@ export default function Lookup() {
               <View style={styles.chips}>
                 {/* Red only for a serious code, as in the health check's fault list. */}
                 {recent.map((c) => (
-                  <Chip key={c} label={c} mono tone={faultMeaning(c, { brand: conn.vehicle?.brand }).entry?.severity === 'high' ? 'danger' : undefined} onPress={() => open(c)} />
+                  <Chip key={c} label={c} mono tone={faultMeaning(c, { brand: conn.vehicle?.brand }).entry?.severity === 'high' ? 'danger' : undefined} accessibilityLabel={faultMeaning(c, { brand: conn.vehicle?.brand }).entry?.severity === 'high' ? `${c}. Serious` : c} onPress={() => open(c)} />
                 ))}
               </View>
             </>
@@ -109,7 +114,7 @@ export default function Lookup() {
               iconColour={r.severity === 'high' ? 'red' : 'grey'}
               title={r.code}
               monoTitle
-              subtitle={sentenceCase(r.title)}
+              subtitle={`${r.severity === 'high' ? 'Serious. ' : ''}${sentenceCase(r.title)}`}
               onPress={() => open(r.code)}
             />
           ))}

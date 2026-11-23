@@ -22,7 +22,7 @@ import {
   valueAt,
 } from '../src/logger/format';
 import { gpsFields, gpsNote, metresBetween, projectRoute, routeIndexAt, routeKm, routeOf, toGpx } from '../src/logger/gps';
-import { RateMeter, SampleScheduler } from '../src/logger/scheduler';
+import { ReadRateMeter as RateMeter, SampleScheduler } from '../src/logger/scheduler';
 
 const RPM: LogChannel = { key: obdKey(0x0c), source: 'obd', label: 'Engine speed', unit: 'rpm', decimals: 0 };
 const SPEED: LogChannel = { key: obdKey(0x0d), source: 'obd', label: 'Vehicle speed', unit: 'km/h', decimals: 0 };

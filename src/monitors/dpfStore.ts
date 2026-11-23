@@ -1,6 +1,7 @@
 // DPF regenerations seen by the monitor, kept per car on the phone, and the
 // owner's words for where a DPF value comes from.
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { isRecord, readJsonStrict } from '../storageRead';
 import type { RegenEvent } from './dpf';
 
 const KEY = 'caristini.dpfRegens.v1';
@@ -14,10 +15,14 @@ export function mergeRegens(saved: RegenEvent[], seen: RegenEvent[]): RegenEvent
   return [...byStart.values()].sort((a, b) => a.start - b.start).slice(-MAX_REGENS);
 }
 
+// Throws when the read fails, so a writer does not save over what is stored.
+function allStrict(): Promise<Record<string, RegenEvent[]>> {
+  return readJsonStrict<Record<string, RegenEvent[]>>(KEY, () => ({}), isRecord);
+}
+
 async function all(): Promise<Record<string, RegenEvent[]>> {
   try {
-    const raw = await AsyncStorage.getItem(KEY);
-    return raw ? (JSON.parse(raw) as Record<string, RegenEvent[]>) : {};
+    return await allStrict();
   } catch {
     return {};
   }
@@ -28,7 +33,13 @@ export async function loadRegens(vin: string): Promise<RegenEvent[]> {
 }
 
 export async function saveRegens(vin: string, seen: RegenEvent[]): Promise<RegenEvent[]> {
-  const list = await all();
+  let list: Record<string, RegenEvent[]>;
+  try {
+    list = await allStrict();
+  } catch {
+    // The stored list could not be read: show what was seen, save nothing.
+    return mergeRegens([], seen);
+  }
   const next = mergeRegens(list[vin] ?? [], seen);
   try {
     await AsyncStorage.setItem(KEY, JSON.stringify({ ...list, [vin]: next }));

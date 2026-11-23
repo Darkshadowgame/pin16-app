@@ -22,7 +22,7 @@ export interface ChartLine {
 
 const PAD_Y = 8;
 
-export function LogChart({
+export const LogChart = React.memo(function LogChart({
   lines,
   durationMs,
   height = 120,
@@ -51,8 +51,16 @@ export function LogChart({
   const scrubRef = useRef(onScrub);
   scrubRef.current = onScrub;
   const startX = useRef(0);
+  const lastPx = useRef(-1);
 
-  const toTime = (x: number) => (Math.max(0, Math.min(widthRef.current, x)) / Math.max(1, widthRef.current)) * span;
+  // Reports a time only when the finger has moved to another pixel column.
+  const emit = (x: number) => {
+    const w = Math.max(1, widthRef.current);
+    const px = Math.round(Math.max(0, Math.min(w, x)));
+    if (px === lastPx.current) return;
+    lastPx.current = px;
+    scrubRef.current((px / w) * span);
+  };
   const pan = useMemo(
     () =>
       PanResponder.create({
@@ -60,9 +68,10 @@ export function LogChart({
         onMoveShouldSetPanResponder: (_, g) => Math.abs(g.dx) > Math.abs(g.dy),
         onPanResponderGrant: (e) => {
           startX.current = e.nativeEvent.locationX;
-          scrubRef.current(toTime(startX.current));
+          lastPx.current = -1;
+          emit(startX.current);
         },
-        onPanResponderMove: (_, g) => scrubRef.current(toTime(startX.current + g.dx)),
+        onPanResponderMove: (_, g) => emit(startX.current + g.dx),
         // A vertical swipe scrolls the page instead.
         onPanResponderTerminationRequest: () => true,
       }),
@@ -129,12 +138,12 @@ export function LogChart({
       ) : null}
     </View>
   );
-}
+});
 
 // The route of a log with GPS, north up, no map underneath. Green dot: start.
 // Square: end. Numbered dots: markers. Drag on the route to move the cursor
 // to the nearest point.
-export function RouteView({
+export const RouteView = React.memo(function RouteView({
   route,
   markers,
   cursor,
@@ -159,6 +168,7 @@ export function RouteView({
   const routeRef = useRef(route);
   routeRef.current = route;
   const origin = useRef({ x: 0, y: 0 });
+  const lastIdx = useRef(-1);
 
   const nearest = (x: number, y: number) => {
     const p = ptsRef.current;
@@ -171,14 +181,20 @@ export function RouteView({
         best = i;
       }
     }
-    if (best >= 0) scrubRef.current(routeRef.current[best].t);
+    // Only when the nearest point changes.
+    if (best >= 0 && best !== lastIdx.current) {
+      lastIdx.current = best;
+      scrubRef.current(routeRef.current[best].t);
+    }
   };
   const pan = useMemo(
     () =>
       PanResponder.create({
         onStartShouldSetPanResponder: () => true,
-        onMoveShouldSetPanResponder: () => true,
+        // A vertical swipe scrolls the page, as on the line chart.
+        onMoveShouldSetPanResponder: (_, g) => Math.abs(g.dx) > Math.abs(g.dy),
         onPanResponderGrant: (e) => {
+          lastIdx.current = -1;
           origin.current = { x: e.nativeEvent.locationX, y: e.nativeEvent.locationY };
           nearest(origin.current.x, origin.current.y);
         },
@@ -223,7 +239,7 @@ export function RouteView({
       ) : null}
     </View>
   );
-}
+});
 
 const styles = StyleSheet.create({
   box: { borderRadius: 10, overflow: 'hidden' },

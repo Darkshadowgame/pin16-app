@@ -16,7 +16,7 @@ import { useStayAwake } from '../keepAwake';
 import { LeaveRunGuard } from '../leaveRun';
 import { MONO, space, type, useTheme } from '../theme';
 import { useConnection } from '../state';
-import { Button, Chips, Group, ListRow, NeedsConnection, Notice, Screen } from '../ui';
+import { announce, Button, Chips, Group, ListRow, NeedsConnection, Notice, Screen } from '../ui';
 
 const INSTRUCTIONS = 'Start, wait for the first round, then press and release the switch you are looking for. The values that change are listed.';
 
@@ -60,6 +60,21 @@ export default function FindSwitch() {
     const id = setInterval(() => setSeconds(Math.floor((Date.now() - started) / 1000)), 1000);
     return () => clearInterval(id);
   }, [running]);
+  // The tool exists to show which value moves: each new or repeated change is said aloud.
+  const spoken = useRef(new Map<string, number>());
+  useEffect(() => {
+    if (!tracker || !baselineReady(tracker)) {
+      spoken.current.clear();
+      return;
+    }
+    for (const f of changedFields(tracker)) {
+      const id = `${f.group}.${f.field}`;
+      if (spoken.current.get(id) !== f.changes) {
+        spoken.current.set(id, f.changes);
+        announce(`Group ${f.group} field ${f.field}, now ${f.now}`);
+      }
+    }
+  }, [tracker]);
 
   if (!client || !v || !client.supportsModules) {
     return (
@@ -151,7 +166,7 @@ export default function FindSwitch() {
         </Group>
       ) : (
         <>
-          <Group header={def.name} help={SECTIONS.findSwitch} footer={`${groups.length} value group${groups.length === 1 ? '' : 's'} are read: ${groups.join(', ')}. ${INSTRUCTIONS}`}>
+          <Group header={def.name} help={SECTIONS.findSwitch} footer={`${groups.length} value group${groups.length === 1 ? '' : 's'} read: ${groups.join(', ')}.`}>
             <View style={styles.pad}>
               <View style={styles.buttons}>
                 <View style={{ flex: 1 }}>
@@ -195,7 +210,7 @@ export default function FindSwitch() {
                           {label && !own ? <Text style={[type.small, { color: t.muted }]}>{label}</Text> : null}
                           <Text style={[type.small, { color: t.muted }]}>Changed {f.changes} time{f.changes === 1 ? '' : 's'}</Text>
                           {naming !== id ? (
-                            <Pressable accessibilityRole="button" accessibilityLabel={`${own ? 'Rename' : 'Name'} group ${f.group} field ${f.field}`} onPress={() => setNaming(id)} hitSlop={8} style={{ alignSelf: 'flex-start', paddingVertical: 4 }}>
+                            <Pressable accessibilityRole="button" accessibilityLabel={`${own ? 'Rename' : 'Name'} this value, group ${f.group} field ${f.field}`} onPress={() => setNaming(id)} hitSlop={8} style={{ alignSelf: 'flex-start', minHeight: 44, justifyContent: 'center' }}>
                               <Text style={[type.sub, { color: t.accentText }]}>{own ? 'Rename this value' : 'Name this value'}</Text>
                             </Pressable>
                           ) : null}

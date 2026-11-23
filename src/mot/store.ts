@@ -1,6 +1,7 @@
 // MOT check in progress, per car, kept on the phone so the walk-round can be
 // done over a few days and the car read once.
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { isRecord, readJsonStrict } from '../storageRead';
 import type { Answer, CarRead } from './rules';
 
 export interface MotDraft {
@@ -14,10 +15,14 @@ export interface MotDraft {
 
 const KEY = 'caristini.mot.v1';
 
+// Throws when the read fails, so a writer does not save over what is stored.
+function allStrict(): Promise<Record<string, MotDraft>> {
+  return readJsonStrict<Record<string, MotDraft>>(KEY, () => ({}), isRecord);
+}
+
 async function all(): Promise<Record<string, MotDraft>> {
   try {
-    const raw = await AsyncStorage.getItem(KEY);
-    return raw ? (JSON.parse(raw) as Record<string, MotDraft>) : {};
+    return await allStrict();
   } catch {
     return {};
   }
@@ -28,8 +33,8 @@ export async function loadDraft(vin: string): Promise<MotDraft | null> {
 }
 
 export async function saveDraft(d: MotDraft): Promise<void> {
-  const list = await all();
   try {
+    const list = await allStrict();
     await AsyncStorage.setItem(KEY, JSON.stringify({ ...list, [d.vin]: d }));
   } catch {
     // Storage unavailable: the check still works this session.
@@ -37,11 +42,11 @@ export async function saveDraft(d: MotDraft): Promise<void> {
 }
 
 export async function clearDraft(vin: string): Promise<void> {
-  const list = await all();
-  delete list[vin];
   try {
+    const list = await allStrict();
+    delete list[vin];
     await AsyncStorage.setItem(KEY, JSON.stringify(list));
   } catch {
-    // ignore
+    // Read or write failed: the saved drafts are left as they are.
   }
 }

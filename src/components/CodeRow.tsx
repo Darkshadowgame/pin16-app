@@ -77,29 +77,33 @@ export function CodeRow({
       });
   };
   const canDetail = !!detailModuleId && !!conn.client;
+  const openCode = () => {
+    tap();
+    router.push({ pathname: '/code/[code]', params: { code, ...(module ? { module } : {}), ...(moduleId ? { moduleId } : {}), ...(state ? { state } : {}) } });
+  };
   const meaning = faultMeaning(code, { module, brand });
   const entry = meaning.entry;
   const serious = entry?.severity === 'high';
   return (
     <View>
-    <Pressable
-      accessibilityRole="button"
-      accessibilityLabel={`${code}. ${title ?? entry?.title ?? ''}. ${sub}`}
-      onPress={() => {
-        tap();
-        router.push({ pathname: '/code/[code]', params: { code, ...(module ? { module } : {}), ...(moduleId ? { moduleId } : {}), ...(state ? { state } : {}) } });
-      }}
-      style={({ pressed }) => [styles.code, { borderColor: t.border, borderTopWidth: first ? 0 : StyleSheet.hairlineWidth, backgroundColor: pressed ? t.raised : 'transparent' }]}
-    >
-      <View style={[styles.codeChip, { backgroundColor: serious ? t.dangerSoft : t.sunken }]}>
-        <Text style={[styles.codeId, { color: serious ? t.danger : t.text }]}>{label ?? code}</Text>
-      </View>
-      <View style={{ flex: 1 }}>
-        <Text style={[type.callout, { color: t.text }]} numberOfLines={3}>
-          {title ?? meaning.title}
-        </Text>
-        <Text style={[type.small, { color: t.muted, marginTop: 1 }]}>{sub}</Text>
-      </View>
+    {/* The row is a plain container: the code page and Details are two separate buttons, so VoiceOver reaches both. */}
+    <View style={[styles.code, { borderColor: t.border, borderTopWidth: first ? 0 : StyleSheet.hairlineWidth }]}>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={`${code}. ${serious ? 'Serious. ' : ''}${title ?? entry?.title ?? ''}. ${sub}`}
+        onPress={openCode}
+        style={({ pressed }) => [styles.codeMain, { backgroundColor: pressed ? t.raised : 'transparent' }]}
+      >
+        <View style={[styles.codeChip, { backgroundColor: serious ? t.dangerSoft : t.sunken }]}>
+          <Text style={[styles.codeId, { color: serious ? t.danger : t.text }]}>{label ?? code}</Text>
+        </View>
+        <View style={{ flex: 1 }}>
+          <Text style={[type.callout, { color: t.text }]} numberOfLines={3}>
+            {title ?? meaning.title}
+          </Text>
+          <Text style={[type.small, { color: t.muted, marginTop: 1 }]}>{sub}</Text>
+        </View>
+      </Pressable>
       {right ?? null}
       {canDetail ? (
         <Pressable accessibilityRole="button" accessibilityLabel={`Details for fault ${code}`} accessibilityState={{ expanded: open }} onPress={toggle} style={styles.info}>
@@ -107,8 +111,10 @@ export function CodeRow({
           <Icon name={open ? 'chevron-up' : 'chevron-down'} size={14} color={t.accentText} />
         </Pressable>
       ) : null}
-      <Icon name="chevron-right" size={13} color={t.faint} />
-    </Pressable>
+      <Pressable accessible={false} importantForAccessibility="no" onPress={openCode} hitSlop={8}>
+        <Icon name="chevron-right" size={13} color={t.faint} />
+      </Pressable>
+    </View>
     {open && canDetail ? (
       <View style={[styles.detail, { borderColor: t.border }]}>
         {loading ? (
@@ -145,7 +151,8 @@ export function FaultRow({ fault, module, moduleId, first, detailModuleId }: { f
 }
 
 const styles = StyleSheet.create({
-  code: { flexDirection: 'row', gap: space.md, paddingVertical: space.md, paddingLeft: space.lg, paddingRight: space.lg, borderTopWidth: StyleSheet.hairlineWidth, alignItems: 'center' },
+  code: { flexDirection: 'row', gap: space.md, paddingRight: space.lg, borderTopWidth: StyleSheet.hairlineWidth, alignItems: 'center' },
+  codeMain: { flex: 1, flexDirection: 'row', gap: space.md, paddingVertical: space.md, paddingLeft: space.lg, alignItems: 'center', minHeight: 44 },
   codeChip: { borderRadius: 6, paddingHorizontal: 7, paddingVertical: 4 },
   info: { minWidth: 44, minHeight: 44, flexDirection: 'row', gap: 2, alignItems: 'center', justifyContent: 'center' },
   spinner: { alignSelf: 'flex-start' },

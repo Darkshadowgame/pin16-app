@@ -1,6 +1,6 @@
 import { router, useFocusEffect } from 'expo-router';
 import React, { useCallback, useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 import { DiaryEntry, loadDiary, removeDiary } from '../../../diary';
 import { diaryCars, entryCarKey, entryCarName } from '../../../diaryCars';
 import { useGarage, vehicleTitle } from '../../../vehicle/garage';
@@ -8,7 +8,7 @@ import { onTool, space, ToolColour, type, useTheme } from '../../../theme';
 import { PinMark } from '../../../brand/PinMark';
 import { GUIDES } from '../../../help';
 import { useSettings } from '../../../settings';
-import { Chips, ConfirmSheet, Group, HeaderButton, Icon, IconName, Screen, tap } from '../../../ui';
+import { Button, Chips, ConfirmSheet, Group, HeaderButton, Icon, IconName, Screen, tap } from '../../../ui';
 import { dateText } from '../../../timeText';
 
 const KIND: Record<string, { icon: IconName; colour: ToolColour }> = {
@@ -55,6 +55,7 @@ export default function Diary() {
       guide={GUIDES.diary}
       trailing={<HeaderButton icon="plus" label="Add entry" filled onPress={() => router.push('/diary-add')} />}
     >
+      {entries === null ? <ActivityIndicator color={t.muted} style={{ marginTop: space.xxl }} /> : null}
       {entries && entries.length === 0 ? (
         <View style={{ alignItems: 'center', paddingVertical: space.xxl * 2, paddingHorizontal: space.xl }}>
           <PinMark size={72} decorative />
@@ -62,6 +63,7 @@ export default function Diary() {
           <Text style={[type.sub, { color: t.muted, textAlign: 'center', marginTop: space.sm }]}>
             Services, repairs and notes you add show here. Cleared faults, service resets and setting changes are added for you.
           </Text>
+          <Button label="Add an entry" icon="plus" onPress={() => router.push('/diary-add')} style={{ marginTop: space.lg, alignSelf: 'stretch' }} />
         </View>
       ) : null}
 
@@ -80,8 +82,10 @@ export default function Diary() {
             const k = KIND[e.kind] ?? KIND.Other;
             return (
               <View key={e.id} style={[styles.entry, { borderColor: t.border, borderTopWidth: i ? StyleSheet.hairlineWidth : 0 }]}>
+                {/* One element for VoiceOver: the entry reads as a whole; the bin is its own button. */}
+                <View accessible style={styles.entryText}>
                 <View style={[styles.icon, { backgroundColor: t[k.colour] }]}>
-                  <Icon name={k.icon} size={17} color={onTool(k.colour)} />
+                  <Icon name={k.icon} size={17} color={onTool(k.colour, t)} />
                 </View>
                 <View style={{ flex: 1 }}>
                   <View style={styles.titleRow}>
@@ -94,6 +98,7 @@ export default function Diary() {
                   </Text>
                   {e.notes ? <Text style={[type.callout, { color: t.text, marginTop: space.xs }]}>{e.notes}</Text> : null}
                 </View>
+                </View>
                 {/* A bin at the row's end, as on a saved speed range; it asks first. */}
                 <Pressable
                   accessibilityRole="button"
@@ -104,7 +109,7 @@ export default function Diary() {
                   }}
                   style={({ pressed }) => [styles.delete, { opacity: pressed ? 0.5 : 1 }]}
                 >
-                  <Icon name="trash-can-outline" size={18} color={t.danger} />
+                  <Icon name="trash-can-outline" size={18} color={t.muted} />
                 </Pressable>
               </View>
             );
@@ -136,6 +141,7 @@ const formatDate = (iso: string): string => dateText(iso);
 const styles = StyleSheet.create({
   add: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
   entry: { flexDirection: 'row', gap: space.md, paddingVertical: space.md, paddingHorizontal: space.lg, alignItems: 'flex-start' },
+  entryText: { flex: 1, flexDirection: 'row', gap: space.md, alignItems: 'flex-start' },
   icon: { width: 30, height: 30, borderRadius: 7, alignItems: 'center', justifyContent: 'center', marginTop: 2 },
   titleRow: { flexDirection: 'row', alignItems: 'baseline', gap: space.sm },
   delete: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center', alignSelf: 'center', marginRight: -space.md },

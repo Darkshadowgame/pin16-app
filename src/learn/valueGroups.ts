@@ -7,7 +7,7 @@ import type { Vehicle } from '../vehicle/garage';
 
 interface GarageStore {
   latest(vin: string): Vehicle | undefined;
-  update(vin: string, patch: Partial<Vehicle>): Promise<void> | void;
+  update(vin: string, patch: Partial<Vehicle>): Promise<unknown> | void;
 }
 
 // How a module answers on this car: this connection first, then the saved

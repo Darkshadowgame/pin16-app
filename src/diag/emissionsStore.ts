@@ -2,6 +2,7 @@
 // last read from each car, kept on the phone so Emissions self-tests can show
 // a Learn my car read without asking the car again.
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { isRecord, readJsonStrict } from '../storageRead';
 import type { ElmClient } from '../obd/elm';
 import type { Monitor } from '../obd/pids';
 import { Mode06Read, readMode06 } from './service06';
@@ -21,10 +22,14 @@ export interface SavedEmissions {
 
 const KEY = 'caristini.emissions.v1';
 
+// Throws when the read fails, so a writer does not save over what is stored.
+function allStrict(): Promise<Record<string, SavedEmissions>> {
+  return readJsonStrict<Record<string, SavedEmissions>>(KEY, () => ({}), isRecord);
+}
+
 async function all(): Promise<Record<string, SavedEmissions>> {
   try {
-    const raw = await AsyncStorage.getItem(KEY);
-    return raw ? (JSON.parse(raw) as Record<string, SavedEmissions>) : {};
+    return await allStrict();
   } catch {
     return {};
   }
@@ -36,13 +41,13 @@ export async function loadEmissions(vin: string): Promise<SavedEmissions | null>
 
 // Clearing faults resets the self-tests, so a saved read no longer applies.
 export async function forgetEmissions(vin: string): Promise<void> {
-  const list = await all();
-  if (!list[vin]) return;
-  delete list[vin];
   try {
+    const list = await allStrict();
+    if (!list[vin]) return;
+    delete list[vin];
     await AsyncStorage.setItem(KEY, JSON.stringify(list));
   } catch {
-    // Storage unavailable: nothing saved to forget.
+    // Storage unavailable: the saved list is left as it is.
   }
 }
 

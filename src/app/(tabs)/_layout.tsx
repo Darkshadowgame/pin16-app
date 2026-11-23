@@ -8,7 +8,7 @@ export default function TabsLayout() {
   const t = useTheme();
   const conn = useConnection();
   return (
-    <NativeTabs tintColor={t.accent} badgeBackgroundColor={t.red}>
+    <NativeTabs tintColor={t.accent} badgeBackgroundColor={t.badge}>
       <NativeTabs.Trigger name="(car)">
         <NativeTabs.Trigger.Icon sf={{ default: 'car', selected: 'car.fill' }} md="directions_car" />
         <NativeTabs.Trigger.Label>Car</NativeTabs.Trigger.Label>

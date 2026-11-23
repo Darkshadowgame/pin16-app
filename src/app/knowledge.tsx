@@ -1,9 +1,9 @@
 import { router } from 'expo-router';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { Linking, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { KB_KIND_LABEL, KbEntry, KbKind, kbForCar, loadKb, onKb, syncKb } from '../kb';
 import { useConnection } from '../state';
-import { radius, space, type, useTheme } from '../theme';
+import { onTool, radius, space, type, useTheme } from '../theme';
 import { Group, Icon, IconName, ListRow, Notice, Pill, Screen, SearchField, tap, tool } from '../ui';
 import { useGarage, vehicleTitle } from '../vehicle/garage';
 import { loadDiscovery } from '../discover';
@@ -11,6 +11,7 @@ import { ENRICHED_MODULES } from '../coding/enriched';
 import { sensorCount, sensorCountText } from '../vehicle/counts';
 import { SECTIONS, WHAT_IS_SENT } from '../help';
 import { dateText } from '../timeText';
+import { openWeb } from '../openWeb';
 
 const KIND_ICON: Record<KbKind, IconName> = {
   fuse: 'flash-outline',
@@ -134,7 +135,7 @@ export default function Knowledge() {
                 >
                   {/* A grey square: a note is a fact about the car, not a tool. */}
                   <View style={[styles.icon, { backgroundColor: t.grey }]}>
-                    <Icon name={KIND_ICON[e.kind]} size={17} color="#FFFFFF" />
+                    <Icon name={KIND_ICON[e.kind]} size={17} color={onTool('grey')} />
                   </View>
                   <View style={{ flex: 1 }}>
                     <Text style={[type.heading, { color: t.text }]}>{e.title}</Text>
@@ -149,7 +150,7 @@ export default function Knowledge() {
                           {e.car.platform ? <Pill text={e.car.platform} /> : null}
                         </View>
                         {e.sources.map((s) => (
-                          <Pressable key={s.url} onPress={() => Linking.openURL(s.url)}>
+                          <Pressable key={s.url} onPress={() => openWeb(s.url)}>
                             <Text style={[type.small, { color: t.accentText }]} numberOfLines={1}>
                               {s.label}: {s.url}
                             </Text>

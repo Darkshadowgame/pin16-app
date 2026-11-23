@@ -86,7 +86,7 @@ export class SampleScheduler {
 }
 
 // Reads a second over a sliding window of the latest reads.
-export class RateMeter {
+export class ReadRateMeter {
   private times: number[] = [];
   constructor(private windowMs = 5000) {}
 

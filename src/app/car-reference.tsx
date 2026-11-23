@@ -59,7 +59,7 @@ export default function CarReference() {
           first
           title={f.title}
           subtitle={f.codes.length ? f.codes.join(', ') : f.symptoms}
-          right={<Icon name={shown ? 'chevron-up' : 'chevron-down'} size={13} color={t.faint} />}
+          expanded={shown} right={<Icon name={shown ? 'chevron-up' : 'chevron-down'} size={13} color={t.faint} />}
           noChevron
           onPress={() => setOpen(shown ? null : i)}
         />

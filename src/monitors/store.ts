@@ -1,6 +1,7 @@
 // Saved monitor data on the phone (AsyncStorage): performance runs per car,
 // custom timer ranges, and trips per car.
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { isList, readJsonStrict } from '../storageRead';
 import type { SavedTrip } from './trip';
 
 const RUNS = 'caristini.perfRuns.v1';
@@ -30,12 +31,25 @@ export interface CustomRange {
   unit: 'mph' | 'km/h';
 }
 
+// Throws when the read fails, so a writer does not save over what is stored.
+function loadStrict<T>(key: string): Promise<T[]> {
+  return readJsonStrict<T[]>(key, () => [], isList);
+}
+
 async function load<T>(key: string): Promise<T[]> {
   try {
-    const raw = await AsyncStorage.getItem(key);
-    return raw ? (JSON.parse(raw) as T[]) : [];
+    return await loadStrict<T>(key);
   } catch {
     return [];
+  }
+}
+
+// Loads the list, changes it and saves it. A failed read saves nothing.
+async function change<T>(key: string, edit: (list: T[]) => T[]): Promise<void> {
+  try {
+    await save(key, edit(await loadStrict<T>(key)));
+  } catch {
+    // The stored list could not be read: it is left as it is.
   }
 }
 
@@ -52,19 +66,25 @@ export async function loadRuns(vin: string): Promise<SavedRun[]> {
 }
 
 export async function addRun(run: SavedRun): Promise<void> {
-  await save(RUNS, [run, ...(await load<SavedRun>(RUNS))].slice(0, MAX_RUNS));
+  await change<SavedRun>(RUNS, (list) => [run, ...list].slice(0, MAX_RUNS));
 }
 
 export async function clearRuns(vin: string): Promise<void> {
-  await save(RUNS, (await load<SavedRun>(RUNS)).filter((r) => r.vin !== vin));
+  await change<SavedRun>(RUNS, (list) => list.filter((r) => r.vin !== vin));
 }
 
 export function loadRanges(): Promise<CustomRange[]> {
   return load<CustomRange>(RANGES);
 }
 
-export function saveRanges(list: CustomRange[]): Promise<void> {
-  return save(RANGES, list);
+export async function saveRanges(list: CustomRange[]): Promise<void> {
+  try {
+    // A failed read means the stored ranges are unknown: save nothing.
+    await loadStrict<CustomRange>(RANGES);
+  } catch {
+    return;
+  }
+  await save(RANGES, list);
 }
 
 export async function loadTrips(vin: string): Promise<SavedTrip[]> {
@@ -72,9 +92,9 @@ export async function loadTrips(vin: string): Promise<SavedTrip[]> {
 }
 
 export async function addTrip(trip: SavedTrip): Promise<void> {
-  await save(TRIPS, [trip, ...(await load<SavedTrip>(TRIPS))].slice(0, MAX_TRIPS));
+  await change<SavedTrip>(TRIPS, (list) => [trip, ...list].slice(0, MAX_TRIPS));
 }
 
 export async function removeTrip(id: string): Promise<void> {
-  await save(TRIPS, (await load<SavedTrip>(TRIPS)).filter((t) => t.id !== id));
+  await change<SavedTrip>(TRIPS, (list) => list.filter((t) => t.id !== id));
 }

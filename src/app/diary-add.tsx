@@ -5,7 +5,7 @@ import { addDiary, DIARY_KINDS, parseUkDate, shiftDate, today, ukDate } from '..
 import { useSettings } from '../settings';
 import { useConnection } from '../state';
 import { space, useTheme } from '../theme';
-import { Body, Button, Chips, Field, Group, Screen } from '../ui';
+import { Body, Button, Chips, Field, Group, Notice, Screen } from '../ui';
 import { useGarage, vehicleTitle } from '../vehicle/garage';
 
 export default function DiaryAdd() {
@@ -18,6 +18,9 @@ export default function DiaryAdd() {
   const [dateText, setDateText] = useState(ukDate(today()));
   const [mileage, setMileage] = useState('');
   const [notes, setNotes] = useState('');
+  // True while the entry is being saved; the form keeps what was typed until the save works.
+  const [saving, setSaving] = useState(false);
+  const [failed, setFailed] = useState(false);
   const date = parseUkDate(dateText);
   const vehicle = garage.get(vin);
   const { settings } = useSettings();
@@ -61,23 +64,34 @@ export default function DiaryAdd() {
         <Field label="Notes" value={notes} onChange={setNotes} multiline placeholder="Parts, garage, cost" style={{ marginTop: space.md }} />
       </Group>
       {!date ? <Body small style={{ color: t.danger, marginBottom: space.sm }}>Type the date as day/month/year, for example 12/11/2026.</Body> : null}
+      {failed ? <Notice tone="danger" icon="alert-circle-outline" text="The entry was not saved. Check the phone has free space, then tap Save entry again. What you typed is still here." /> : null}
       <View>
         <Button
           label="Save entry"
           icon="content-save-outline"
           disabled={!date}
+          busy={saving}
           onPress={async () => {
-            if (!date) return;
-            await addDiary({
-              vin: vehicle?.vin ?? null,
-              vehicleName: vehicle ? vehicleTitle(vehicle) : 'My car',
-              date,
-              kind,
-              mileage: mileage ? Number(mileage) : null,
-              ...(mileage ? { unit } : {}),
-              notes: notes.trim(),
-            });
-            router.back();
+            if (!date || saving) return;
+            setSaving(true);
+            setFailed(false);
+            try {
+              const saved = await addDiary({
+                vin: vehicle?.vin ?? null,
+                vehicleName: vehicle ? vehicleTitle(vehicle) : 'My car',
+                date,
+                kind,
+                mileage: mileage ? Number(mileage) : null,
+                ...(mileage ? { unit } : {}),
+                notes: notes.trim(),
+              });
+              if (saved) router.back();
+              else setFailed(true);
+            } catch {
+              setFailed(true);
+            } finally {
+              setSaving(false);
+            }
           }}
         />
       </View>

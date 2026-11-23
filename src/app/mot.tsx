@@ -38,7 +38,7 @@ import {
 } from '../mot/rules';
 import { clearDraft, loadDraft, MotDraft, saveDraft } from '../mot/store';
 import { useConnection } from '../state';
-import { MONO, space, type, useTheme } from '../theme';
+import { MONO, onTool, space, type, useTheme } from '../theme';
 import { TOOLS, Button, ConfirmSheet, Field, GlowCard, GuideButton, Group, Icon, ListRow, Notice, Pill, Screen, Segmented, success, tap, Tone, tool } from '../ui';
 import { useGarage, vehicleTitle } from '../vehicle/garage';
 
@@ -60,6 +60,11 @@ export default function MotCheck() {
   const recent = recentHealthCheck(last);
 
   const [draft, setDraft] = useState<MotDraft | null>(null);
+  // The newest draft, so a change builds on the last one and is saved outside the state update.
+  const draftRef = useRef<MotDraft | null>(null);
+  useEffect(() => {
+    draftRef.current = draft;
+  }, [draft]);
   const [step, setStep] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -85,20 +90,17 @@ export default function MotCheck() {
     loadDraft(vin).then((d) => alive.current && setDraft(d ?? fresh(vin)));
   }, [vin]);
 
-  const update = (patch: Partial<MotDraft>) =>
-    setDraft((d) => {
-      if (!d) return d;
-      const next = { ...d, ...patch };
-      void saveDraft(next);
-      return next;
-    });
-
-  const setAnswer = (id: string, a: Answer) => setDraft((d) => {
-    if (!d) return d;
-    const next = { ...d, answers: { ...d.answers, [id]: a } };
+  const change = (make: (d: MotDraft) => MotDraft) => {
+    const d = draftRef.current;
+    if (!d) return;
+    const next = make(d);
+    draftRef.current = next;
+    setDraft(next);
     void saveDraft(next);
-    return next;
-  });
+  };
+  const update = (patch: Partial<MotDraft>) => change((d) => ({ ...d, ...patch }));
+
+  const setAnswer = (id: string, a: Answer) => change((d) => ({ ...d, answers: { ...d.answers, [id]: a } }));
 
   useEffect(() => {
     if (!v || !draft || step) return;
@@ -406,7 +408,7 @@ function FindingRow({ f, first }: { f: Finding; first?: boolean }) {
         style={({ pressed }) => [styles.finding, pressed && { backgroundColor: t.raised }]}
       >
         <View style={[styles.findingIcon, { backgroundColor: t[o.colour] }]}>
-          <Icon name={o.icon} size={17} color="#FFFFFF" />
+          <Icon name={o.icon} size={17} color={onTool(o.colour, t)} />
         </View>
         <View style={[styles.findingMain, { borderColor: t.border, borderTopWidth: first ? 0 : StyleSheet.hairlineWidth }]}>
           <View style={styles.findingTitle}>

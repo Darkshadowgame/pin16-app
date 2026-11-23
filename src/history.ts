@@ -2,6 +2,7 @@
 // search Pin16 runs is logged on the phone, so it can be read later with
 // no adapter connected.
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { isList, readJsonStrict } from './storageRead';
 
 export type HistoryKind = 'scan' | 'clear' | 'change' | 'service' | 'sensors' | 'discover' | 'mot' | 'battery' | 'calibration';
 
@@ -71,10 +72,14 @@ const KEY = 'caristini.history.v1';
 const MAX = 500;
 let listeners: (() => void)[] = [];
 
+// Throws when the read fails, so a writer can tell that from an empty history.
+async function readHistory(): Promise<HistoryEntry[]> {
+  return readJsonStrict<HistoryEntry[]>(KEY, () => [], isList);
+}
+
 export async function loadHistory(vin?: string): Promise<HistoryEntry[]> {
   try {
-    const raw = await AsyncStorage.getItem(KEY);
-    const list = raw ? (JSON.parse(raw) as HistoryEntry[]) : [];
+    const list = await readHistory();
     return (vin ? list.filter((e) => e.vin === vin) : list).sort((a, b) => b.at - a.at);
   } catch {
     return [];
@@ -96,13 +101,14 @@ export async function addHistory(entry: Omit<HistoryEntry, 'id' | 'at'> & { at?:
   // Any fault clear resets the emissions self-tests: drop the saved read.
   if (entry.kind === 'clear') await import('./diag/emissionsStore').then((m) => m.forgetEmissions(entry.vin)).catch(() => undefined);
   return inTurn(async () => {
-    const list = await loadHistory();
     const id = `${Date.now()}-${Math.round(Math.random() * 1e6)}`;
-    const next = [{ ...entry, at: entry.at ?? Date.now(), id }, ...list].slice(0, MAX);
     try {
+      // A failed read throws here, so the stored list is left alone.
+      const list = await readHistory();
+      const next = [{ ...entry, at: entry.at ?? Date.now(), id }, ...list].slice(0, MAX);
       await AsyncStorage.setItem(KEY, JSON.stringify(next));
     } catch {
-      // Storage unavailable (for example a private browser window).
+      // Storage unavailable, or the read failed: nothing is written over the saved list.
     }
     listeners.forEach((l) => l());
     return id;
@@ -113,12 +119,12 @@ export async function addHistory(entry: Omit<HistoryEntry, 'id' | 'at'> & { at?:
 // finishes after its entry is saved.
 export function updateHistory(id: string, patch: Partial<Omit<HistoryEntry, 'id' | 'vin'>>): Promise<void> {
   return inTurn(async () => {
-    const list = await loadHistory();
-    if (!list.some((e) => e.id === id)) return;
     try {
+      const list = await readHistory();
+      if (!list.some((e) => e.id === id)) return;
       await AsyncStorage.setItem(KEY, JSON.stringify(list.map((e) => (e.id === id ? { ...e, ...patch } : e))));
     } catch {
-      // ignore
+      // Read or write failed: the saved list is left as it is.
     }
     listeners.forEach((l) => l());
   });
@@ -126,11 +132,11 @@ export function updateHistory(id: string, patch: Partial<Omit<HistoryEntry, 'id'
 
 export function removeHistory(id: string): Promise<void> {
   return inTurn(async () => {
-    const list = await loadHistory();
     try {
+      const list = await readHistory();
       await AsyncStorage.setItem(KEY, JSON.stringify(list.filter((e) => e.id !== id)));
     } catch {
-      // ignore
+      // Read or write failed: the saved list is left as it is.
     }
     listeners.forEach((l) => l());
   });

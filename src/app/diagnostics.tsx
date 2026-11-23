@@ -12,7 +12,7 @@ import { Tp20Module, tp20Name } from '../obd/tp20';
 import { useConnection } from '../state';
 import { radius, space, type, useTheme } from '../theme';
 import { PinMark } from '../brand/PinMark';
-import { TOOLS, Arrive, Button, ConfirmSheet, GlowCard, Group, Icon, ListRow, ModuleRing, NeedsConnection, Notice, Pill, ScanPulse, Screen, success, tap, tool } from '../ui';
+import { TOOLS, announce, Arrive, Button, ConfirmSheet, GlowCard, Group, Icon, ListRow, ModuleRing, NeedsConnection, Notice, Pill, ScanPulse, Screen, success, tap, tool } from '../ui';
 import { CodeRow, FaultRow } from '../components/CodeRow';
 import { allowSleep, stayAwake } from '../keepAwake';
 import { leftText } from '../timeText';
@@ -290,6 +290,11 @@ export default function Diagnostics() {
     setError(null);
     setMessage(null);
     try {
+      const wrong = await conn.verifyCar();
+      if (wrong) {
+        if (alive.current) setError(wrong);
+        return;
+      }
       // Clearing is allowed with the engine running; a module that wants it
       // off refuses by itself, and the result names it.
       const rpm = await client.readLive(RPM).catch(() => null);
@@ -475,6 +480,7 @@ export default function Diagnostics() {
           setStopping(true);
         }}
       />
+      <ScanAnnouncer active={scanning} pct={pct} />
       <GlowCard tone={scanning ? 'brand' : alert ? 'fault' : 'ok'} style={styles.hero}>
         {scanning ? (
           <View style={{ alignItems: 'center' }}>
@@ -494,8 +500,8 @@ export default function Diagnostics() {
                 <PinMark size={64} decorative />
               </ScanPulse>
             )}
-            <Text style={[styles.pct, type.number, displayFont, { color: t.text }]}>{Math.round(pct * 100)}%</Text>
-            <Text style={[type.sub, { color: t.muted, textAlign: 'center' }]} numberOfLines={1}>
+            <Text style={[type.display, styles.pct, type.number, displayFont, { color: t.text }]}>{Math.round(pct * 100)}%</Text>
+            <Text style={[type.sub, { color: t.muted, textAlign: 'center' }]} numberOfLines={3}>
               {current ? `Reading ${current}…` : 'Finishing…'}
             </Text>
             {withModules ? (
@@ -522,7 +528,7 @@ export default function Diagnostics() {
             <View style={styles.summaryRow}>
               <View style={{ flex: 1 }}>
                 <View style={styles.bigRow}>
-                  <Text style={[styles.big, type.number, displayFont, { color: total ? t.danger : t.ok }]}>{total}</Text>
+                  <Text style={[type.figure, type.number, displayFont, { color: total ? t.danger : t.ok }]}>{total}</Text>
                   <Text style={[type.title3, { color: t.text, marginBottom: 8 }]}>{total === 1 ? 'fault' : 'faults'}</Text>
                 </View>
                 <Text style={[type.sub, { color: info.milOn ? t.danger : t.ok, fontWeight: '600' }]}>Engine light {info.milOn ? 'on' : 'off'}</Text>
@@ -554,11 +560,19 @@ export default function Diagnostics() {
 
       {/* What to do next, straight under the result. */}
       {!scanning ? (
+        <Button
+          label="Check again"
+          icon={TOOLS.health.icon}
+          variant={total ? 'secondary' : 'primary'}
+          disabled={!!busy}
+          onPress={() => scan()}
+          style={{ marginBottom: space.lg }}
+        />
+      ) : null}
+      {!scanning ? (
         <Group footer={busy === 'deep' ? 'Available when the check finishes.' : undefined}>
-          {anyToClear ? <ListRow first icon="broom" iconColour={TOOLS.clear.colour} title="Clear all faults" disabled={!!busy} onPress={() => setConfirm({ kind: 'all' })} /> : null}
-          <ListRow first={!anyToClear} icon="file-document-outline" iconColour={TOOLS.report.colour} title="Make health report" onPress={() => router.push('/report')} />
+          <ListRow first icon="file-document-outline" iconColour={TOOLS.report.colour} title="Make health report" onPress={() => router.push('/report')} />
           <ListRow icon="clipboard-list-outline" iconColour={TOOLS.mot.colour} title="MOT check" subtitle="Can use this health check" onPress={() => router.push('/mot')} />
-          <ListRow icon="refresh" iconColour={TOOLS.health.colour} title="Check again" disabled={!!busy} onPress={() => scan()} />
           <ListRow
             icon="clipboard-check-outline"
             iconColour={TOOLS.emissions.colour}
@@ -570,6 +584,8 @@ export default function Diagnostics() {
           {withModules && mode === 'quick' ? (
             <ListRow icon="radar" iconColour={TOOLS.sensors.colour} title="Check every address" subtitle="This was a quick check of the modules your car has. A full check runs by itself every 30 days." disabled={!!busy} onPress={() => scan(true)} />
           ) : null}
+          {/* The riskiest action goes last, and is grey; the confirm sheet guards it. */}
+          {anyToClear ? <ListRow icon="broom" iconColour="grey" title="Clear all faults" disabled={!!busy} onPress={() => setConfirm({ kind: 'all' })} /> : null}
         </Group>
       ) : null}
 
@@ -659,6 +675,7 @@ export default function Diagnostics() {
                 title={showMissing ? 'Hide' : `${missing.length} module${missing.length === 1 ? '' : 's'} not found`}
                 // Opens and closes in place: an up or down chevron, not the one that goes to another page.
                 noChevron
+                expanded={showMissing}
                 right={<Icon name={showMissing ? 'chevron-up' : 'chevron-down'} size={13} color={t.faint} />}
                 onPress={() => setShowMissing((v) => !v)}
               />
@@ -880,12 +897,28 @@ function ModuleBlock({
   );
 }
 
+// Says the progress of a long check aloud at each quarter, and when it ends.
+function ScanAnnouncer({ active, pct }: { active: boolean; pct: number }) {
+  const spoken = React.useRef(0);
+  React.useEffect(() => {
+    if (!active) {
+      spoken.current = 0;
+      return;
+    }
+    const step = Math.floor(pct * 4);
+    if (step > spoken.current && step < 4) {
+      spoken.current = step;
+      announce(`Health check ${step * 25} percent`);
+    }
+  }, [active, pct]);
+  return null;
+}
+
 const styles = StyleSheet.create({
   hero: { paddingVertical: space.xl, paddingHorizontal: space.xl, marginBottom: space.xl },
-  pct: { fontSize: 34, lineHeight: 41, fontWeight: '700', marginTop: space.sm },
+  pct: { marginTop: space.sm },
   summaryRow: { flexDirection: 'row', alignItems: 'flex-start', gap: space.md },
   bigRow: { flexDirection: 'row', alignItems: 'flex-end', gap: space.sm },
-  big: { fontSize: 56, lineHeight: 62, fontWeight: '700', letterSpacing: -1 },
   stateIcon: { width: 56, height: 56, borderRadius: radius.lg, alignItems: 'center', justifyContent: 'center' },
   loadingRow: { flexDirection: 'row', alignItems: 'center', gap: space.sm, padding: space.lg },
   clearRow: { borderTopWidth: StyleSheet.hairlineWidth, marginLeft: space.lg, minHeight: 48, justifyContent: 'center' },

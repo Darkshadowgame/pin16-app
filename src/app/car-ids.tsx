@@ -1,7 +1,7 @@
 import * as Clipboard from 'expo-clipboard';
 import { router, useLocalSearchParams } from 'expo-router';
 import React, { useEffect, useRef, useState } from 'react';
-import { Linking, Pressable, Share, StyleSheet, Text, View } from 'react-native';
+import { Pressable, Share, StyleSheet, Text, View } from 'react-native';
 import { packFor } from '../data/cars';
 import { SECTIONS } from '../help';
 import { MONO, space, type, useTheme } from '../theme';
@@ -13,6 +13,7 @@ import { tp20Name } from '../obd/tp20';
 import { useConnection } from '../state';
 import { decodeVin, vagModelFromParts } from '../vehicle/vin';
 import { dateText } from '../timeText';
+import { openWeb } from '../openWeb';
 
 // Parts and IDs: one car's identity numbers and codes, every module's part
 // number, software and coding, and a parts list, all kept on the phone so
@@ -93,7 +94,7 @@ export default function CarIds() {
           first
           title={`${m.code ? `${m.code} · ` : ''}${m.name}`}
           subtitle={m.part ?? 'No part number read'}
-          right={<Icon name={shown ? 'chevron-up' : 'chevron-down'} size={13} color={t.faint} />}
+          expanded={shown} right={<Icon name={shown ? 'chevron-up' : 'chevron-down'} size={13} color={t.faint} />}
           noChevron
           onPress={() => setOpen(shown ? null : m.id)}
         />
@@ -126,7 +127,7 @@ export default function CarIds() {
       </View>
       {p.notes ? <Text style={[type.small, { color: t.muted }]}>{p.notes}</Text> : null}
       {p.confidence === 'Medium' ? <Pill text="One source" /> : null}
-      <Pressable accessibilityRole="link" onPress={() => Linking.openURL(p.source.url)}>
+      <Pressable accessibilityRole="link" onPress={() => openWeb(p.source.url)}>
         <Text style={[type.caption, { color: t.accentText }]}>{p.source.label}</Text>
       </Pressable>
     </View>
@@ -176,7 +177,7 @@ export default function CarIds() {
                 style={{ marginTop: space.xs }}
               />
               {val?.from === 'ai' && val.source ? (
-                <Pressable accessibilityRole="link" onPress={() => Linking.openURL(val.source!.url)}>
+                <Pressable accessibilityRole="link" onPress={() => openWeb(val.source!.url)}>
                   <Text style={[type.caption, { color: t.accentText }]}>{val.source.label}</Text>
                 </Pressable>
               ) : null}
@@ -232,7 +233,7 @@ export default function CarIds() {
             subtitle={c.note}
             onPress={async () => {
               await Clipboard.setStringAsync(v.vin);
-              Linking.openURL(c.url);
+              openWeb(c.url);
             }}
           />
         ))}

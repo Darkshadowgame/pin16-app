@@ -2,7 +2,7 @@ import { useDisplay } from '../../../fonts';
 import { router, useFocusEffect } from 'expo-router';
 import { chargeVerdict, restVerdict } from '../../../obd/battery';
 import React, { useCallback, useEffect, useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import { codingItemsFor } from '../../../coding/items';
 import { modsForVehicle } from '../../../mods/catalogue';
 import { modulesFor } from '../../../obd/modules';
@@ -17,7 +17,6 @@ import { methodsFor } from '../../../service/procedures';
 import { describeDue, vehicleServiceDue } from '../../../service/reminder';
 import { useSettings } from '../../../settings';
 import { useConnection } from '../../../state';
-import { LinearGradient } from 'expo-linear-gradient';
 import { onTool, radius, space, ToolColour, type, useTheme } from '../../../theme';
 import { MakeBadge, makeLogoFor } from '../../../brand/MakeBadge';
 import { PinMark } from '../../../brand/PinMark';
@@ -49,7 +48,7 @@ function NotConnected() {
       {conn.reconnecting ? (
         <>
           <Notice icon="bluetooth" text={reconnectingText(conn.reconnecting, conn.lastAdapter?.name)} />
-          <Pressable accessibilityRole="button" hitSlop={10} onPress={() => conn.disconnect()} style={{ alignSelf: 'center', marginBottom: space.md }}>
+          <Pressable accessibilityRole="button" hitSlop={12} onPress={() => conn.disconnect()} style={{ alignSelf: 'center', marginBottom: space.md, minHeight: 44, justifyContent: 'center' }}>
             <Text style={[type.sub, { color: t.accentText, fontWeight: '600' }]}>Stop trying</Text>
           </Pressable>
         </>
@@ -72,7 +71,7 @@ function NotConnected() {
       <YourCars />
 
 
-      <Group header="No adapter needed">
+      <Group header="Without the adapter">
         {/* The last car's service reminder, said here when it is due or close, so it is seen without connecting. */}
         {last && due && (due.overdue || due.soon) ? (
           <ListRow
@@ -89,9 +88,7 @@ function NotConnected() {
         ) : null}
         {/* The last car's MOT check, saved logs, battery reading and emissions read. */}
         {last ? <CarRecordRows v={last} /> : null}
-        <ListRow first={!last} {...tool('lookup')} title="Lookup" subtitle="What a code means and how to fix it" onPress={() => router.push('/lookup')} />
-        <ListRow {...tool('service')} title="Service reset guides" subtitle="VW group, Ford, Mazda" onPress={() => router.push('/service')} />
-        <ListRow {...tool('guide')} title="User guide" subtitle="What each screen does and how it works" onPress={() => router.push('/guide')} />
+        <ListRow first={!last} {...tool('service')} title="Service reset guides" subtitle="VW group, Ford, Mazda" onPress={() => router.push('/service')} />
       </Group>
     </Screen>
   );
@@ -199,7 +196,7 @@ function Connected() {
               <Text style={[type.small, { color: t.muted }]}>{checked ? `Last health check, ${when(checkedAt!)}${last?.complete === false ? ' (stopped early)' : ''}` : 'Health check'}</Text>
               {checked ? (
                 <View style={styles.bigRow}>
-                  <Text style={[styles.big, type.number, displayFont, { color: faults ? t.danger : t.ok }]}>{faults}</Text>
+                  <Text style={[type.figure, type.number, displayFont, { color: faults ? t.danger : t.ok }]}>{faults}</Text>
                   <Text style={[type.title3, { color: t.text, marginBottom: 8 }]}>{faults === 1 ? 'fault' : 'faults'}</Text>
                 </View>
               ) : (
@@ -254,29 +251,21 @@ function Connected() {
       </View>
 
       {v.learnSnapshot ? (
-        <Pressable accessibilityRole="button" onPress={() => router.push('/customise/learn')} style={({ pressed }) => [styles.learn, { backgroundColor: t.surface, opacity: pressed ? 0.85 : 1, marginBottom: space.lg }]}>
-          <View style={[styles.learnIcon, { backgroundColor: t[TOOLS.learnSetting.colour] }]}>
-            <Icon name={TOOLS.learnSetting.icon} size={22} color="#FFFFFF" />
-          </View>
-          <View style={{ flex: 1 }}>
-            <Text style={[type.heading, { color: t.text }]}>Carry on learning a setting</Text>
-            <Text style={[type.small, { color: t.muted, marginTop: 1 }]}>Starting point saved. Tap to compare what changed.</Text>
-          </View>
-          <Icon name="chevron-right" size={13} color={t.faint} />
-        </Pressable>
+        <Group>
+          <ListRow first {...tool('learnSetting')} title="Carry on learning a setting" subtitle="Starting point saved. Tap to compare what changed." onPress={() => router.push('/customise/learn')} />
+        </Group>
       ) : null}
 
+      <Group>
+        <ListRow first {...tool('learn')} title="Learn my car" subtitle={learnLine} onPress={() => router.push('/learn-car')} />
+      </Group>
 
-      <Pressable accessibilityRole="button" onPress={() => router.push('/learn-car')} style={({ pressed }) => [styles.learn, { backgroundColor: t.surface, opacity: pressed ? 0.85 : 1 }]}>
-        <View style={[styles.learnIcon, { backgroundColor: t[TOOLS.learn.colour] }]}>
-          <Icon name={TOOLS.learn.icon} size={22} color="#FFFFFF" />
-        </View>
-        <View style={{ flex: 1 }}>
-          <Text style={[type.heading, { color: t.text }]}>Learn my car</Text>
-          <Text style={[type.small, { color: t.muted, marginTop: 1 }]}>{learnLine}</Text>
-        </View>
-        <Icon name="chevron-right" size={13} color={t.faint} />
-      </Pressable>
+      <Group header="Driving">
+        <ListRow first {...tool('dashboard')} title="Dashboard" value="Gauges" onPress={() => router.push('/dashboard')} />
+        <ListRow {...tool('performance')} title="Performance" value="0 to 60" onPress={() => router.push('/performance')} />
+        <ListRow {...tool('monitors')} title="Drive monitors" value={driveToolsSummary(driveTools(v, !!(info.diesel || v.fuel === 'Diesel')))} onPress={() => router.push('/monitors')} />
+        <ListRow {...tool('logger')} title="Data logger" value="Record" onPress={() => router.push('/logger')} />
+      </Group>
 
       <Group header="This car" footer={`${info.adapter} on ${info.protocol}`}>
         <ListRow first icon="car-info" iconColour="grey" title="VIN" value={v.vin} mono />
@@ -290,16 +279,9 @@ function Connected() {
         <ListRow {...tool('details')} title={v.model ? 'Edit details' : 'Add model details'} onPress={() => router.push(`/vehicle?vin=${encodeURIComponent(v.vin)}`)} />
       </Group>
 
-      <Group header="Driving">
-        <ListRow first {...tool('dashboard')} title="Dashboard" value="Gauges" onPress={() => router.push('/dashboard')} />
-        <ListRow {...tool('performance')} title="Performance" value="0 to 60" onPress={() => router.push('/performance')} />
-        <ListRow {...tool('monitors')} title="Drive monitors" value={driveToolsSummary(driveTools(v, !!(info.diesel || v.fuel === 'Diesel')))} onPress={() => router.push('/monitors')} />
-        <ListRow {...tool('logger')} title="Data logger" value="Record" onPress={() => router.push('/logger')} />
-      </Group>
-
-      <Group header="Expert" footer="Optional. Workshop opens one module at a time; Learn my car, above, reads everything and fills in these screens.">
+      <Group header="Expert" footer="Optional. Workshop opens one module at a time.">
         <ListRow first {...tool('workshop')} title="Workshop" value="Every module" onPress={() => router.push('/workshop')} />
-        {v.group === 'vag' && v.platform === 'PQ35' && conn.client?.supportsModules ? <ListRow {...tool('calibrations')} title="Calibrations" value="Heater flap, throttle" onPress={() => router.push('/calibrations')} /> : null}
+        {v.group === 'vag' && v.platform === 'PQ35' && conn.client?.supportsModules ? <ListRow {...tool('calibrations')} title="Calibrations" value="Flaps, throttle" onPress={() => router.push('/calibrations')} /> : null}
         <ListRow {...tool('sensors')} title="Find my car’s sensors" value={sensors.maker ? `${sensors.maker.toLocaleString('en-GB')} found` : undefined} onPress={() => router.push('/sensors')} />
         <ListRow {...tool('discover')} title="Unknown values" value="Explore" onPress={() => router.push('/discover')} />
         <ListRow {...tool('listen')} title="Listen mode" value="Other tools" onPress={() => router.push('/listen')} />
@@ -314,15 +296,13 @@ function Connected() {
 // (the Meaning Rule: orange is not a status colour; status uses green, yellow and red).
 function Stat({ icon, label, value, tone, onPress, note }: { icon: IconName; label: string; value: string; tone: 'ok' | 'danger' | 'neutral'; onPress?: () => void; note?: string }) {
   const t = useTheme();
+  const large = useWindowDimensions().fontScale > 1.3;
   const c = tone === 'ok' ? t.ok : tone === 'danger' ? t.danger : t.muted;
   return (
-    <Pressable accessibilityRole={onPress ? 'button' : undefined} accessibilityLabel={`${label}: ${value}${note ? ` ${note}` : ''}`} disabled={!onPress} onPress={onPress} style={[styles.stat, { backgroundColor: t.bg + '66' }]}>
+    <Pressable accessibilityRole={onPress ? 'button' : undefined} accessibilityLabel={`${label}: ${value}${note ? ` ${note}` : ''}`} disabled={!onPress} onPress={onPress} style={[styles.stat, large && styles.statLarge, { backgroundColor: t.bg + '66' }]}>
       <Icon name={icon} size={16} color={c} />
-      {/* One line each, so the 3 figures sit on one baseline. */}
-      <Text style={[type.caption, { color: t.muted, marginTop: 4 }]} numberOfLines={1}>
-        {label}
-      </Text>
-      <Text style={[type.sub, type.number, { color: t.text, fontWeight: '700' }]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.85}>
+      <Text style={[type.caption, { color: t.muted, marginTop: 4 }]}>{label}</Text>
+      <Text style={[type.sub, type.number, { color: t.text, fontWeight: '700' }]} numberOfLines={large ? undefined : 1} adjustsFontSizeToFit={!large} minimumFontScale={0.85}>
         {value}
       </Text>
       {note ? (
@@ -332,10 +312,12 @@ function Stat({ icon, label, value, tone, onPress, note }: { icon: IconName; lab
   );
 }
 
-// One of the four main tools: a big tappable tile with a tinted glow.
+// One of the four main tools: a flat tile with the tool's own square as its only colour.
 function Tile({ icon, colour, title, value, onPress }: { icon: IconName; colour: ToolColour; title: string; value: string; onPress: () => void }) {
   const t = useTheme();
   const c = t[colour];
+  // At the larger text sizes a tile takes the full width, so its words are not cut.
+  const large = useWindowDimensions().fontScale > 1.3;
   return (
     <Pressable
       accessibilityRole="button"
@@ -344,17 +326,14 @@ function Tile({ icon, colour, title, value, onPress }: { icon: IconName; colour:
         tap();
         onPress();
       }}
-      style={({ pressed }) => [styles.tile, { backgroundColor: t.surface, transform: [{ scale: pressed ? 0.97 : 1 }] }]}
+      style={({ pressed }) => [styles.tile, large && { flexBasis: '100%' }, { backgroundColor: t.surface, transform: [{ scale: pressed ? 0.97 : 1 }] }]}
     >
-      <LinearGradient colors={[c + '33', c + '00']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={StyleSheet.absoluteFill} />
       <View style={[styles.tileIcon, { backgroundColor: c }]}>
-        <Icon name={icon} size={20} color={onTool(colour)} />
+        <Icon name={icon} size={20} color={onTool(colour, t)} />
       </View>
       <Text style={[type.heading, { color: t.text, marginTop: space.md }]}>{title}</Text>
-      {/* The status wraps to a second line if it must; it is never cut short. */}
-      <Text style={[type.small, { color: t.muted, marginTop: 1 }]} numberOfLines={2}>
-        {value}
-      </Text>
+      {/* The status wraps to as many lines as it needs; it is never cut short. */}
+      <Text style={[type.small, { color: t.muted, marginTop: 1 }]}>{value}</Text>
     </Pressable>
   );
 }
@@ -364,18 +343,13 @@ const when = (ms: number): string => dateTimeText(ms);
 
 const styles = StyleSheet.create({
   welcome: { alignItems: 'center', paddingVertical: space.xxl, paddingHorizontal: space.xl },
-  welcomeIcon: { width: 88, height: 88, borderRadius: 44, alignItems: 'center', justifyContent: 'center' },
   metaRow: { flexDirection: 'row', alignItems: 'center', gap: space.sm, marginTop: -space.sm, marginBottom: space.sm },
-  circleButton: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
   healthTop: { flexDirection: 'row', alignItems: 'flex-start', gap: space.md },
   bigRow: { flexDirection: 'row', alignItems: 'flex-end', gap: space.sm, marginTop: 2 },
-  big: { fontSize: 56, lineHeight: 62, fontWeight: '700', letterSpacing: -1 },
-  healthIcon: { width: 56, height: 56, borderRadius: radius.lg, alignItems: 'center', justifyContent: 'center' },
-  stats: { flexDirection: 'row', gap: space.sm, marginTop: space.lg },
+  stats: { flexDirection: 'row', flexWrap: 'wrap', gap: space.sm, marginTop: space.lg },
   stat: { flex: 1, borderRadius: radius.md, padding: space.sm + 2 },
+  statLarge: { flex: 0, width: '100%' },
   tiles: { flexDirection: 'row', flexWrap: 'wrap', gap: space.md, marginBottom: space.lg },
   tile: { flexBasis: '47%', flexGrow: 1, borderRadius: radius.lg, padding: space.lg, overflow: 'hidden', minHeight: 116 },
-  tileIcon: { width: 38, height: 38, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
-  learn: { flexDirection: 'row', alignItems: 'center', gap: space.md, borderRadius: radius.lg, padding: space.lg, marginBottom: space.xl },
-  learnIcon: { width: 42, height: 42, borderRadius: 13, alignItems: 'center', justifyContent: 'center' },
+  tileIcon: { width: 38, height: 38, borderRadius: radius.md, alignItems: 'center', justifyContent: 'center' },
 });

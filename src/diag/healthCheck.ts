@@ -16,7 +16,7 @@ export const ENGINE_OBD = 'Engine (OBD2)';
 
 export interface GarageLike {
   latest(vin: string): Vehicle | undefined;
-  update(vin: string, patch: Partial<Vehicle>): Promise<void>;
+  update(vin: string, patch: Partial<Vehicle>): Promise<unknown>;
 }
 
 export type CarStatus = { milOn: boolean; monitors: Monitor[]; diesel?: boolean };

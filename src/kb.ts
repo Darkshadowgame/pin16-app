@@ -4,6 +4,7 @@
 // pin16 repo (kb/entries/<make>/<id>.json), so it reaches every install
 // on its next start and can be folded into the app's own lists later.
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { isList, readJsonStrict } from './storageRead';
 import { ALL_ITEMS, CodingItem } from './coding/items';
 import { FUSE_CARS } from './data/fuses';
 import { githubReady, listFiles, readFile, writeFile } from './share/github';
@@ -37,10 +38,67 @@ const KEY = 'caristini.kb.v1';
 const SHAS = 'caristini.kb.shas.v1';
 let listeners: (() => void)[] = [];
 
+// Only web links that start with https:// are opened from stored or synced data.
+export function isHttps(u: unknown): u is string {
+  return typeof u === 'string' && /^https:\/\//i.test(u.trim());
+}
+
+// An entry from the repo or from storage, checked and trimmed to the fields
+// the screens use. Null when it is not usable.
+export function cleanKbEntry(x: unknown): KbEntry | null {
+  if (!x || typeof x !== 'object' || Array.isArray(x)) return null;
+  const e = x as Record<string, unknown>;
+  const text = (v: unknown, max: number): v is string => typeof v === 'string' && v.length > 0 && v.length <= max;
+  if (!text(e.id, 160) || !text(e.title, 300) || !(typeof e.kind === 'string' && Object.hasOwn(KB_KIND_LABEL, e.kind))) return null;
+  const car = e.car as Record<string, unknown> | null;
+  if (!car || typeof car !== 'object' || !text(car.make, 80)) return null;
+  const opt = (v: unknown, max: number) => (typeof v === 'string' && v.length <= max ? v : undefined);
+  const sources = (Array.isArray(e.sources) ? e.sources : [])
+    .filter((s): s is { label: unknown; url: string } => !!s && typeof s === 'object' && isHttps((s as { url?: unknown }).url))
+    .slice(0, 20)
+    .map((s) => ({ label: typeof s.label === 'string' ? s.label.slice(0, 200) : s.url, url: s.url.trim() }));
+  return {
+    id: e.id,
+    kind: e.kind as KbKind,
+    car: { make: car.make, model: opt(car.model, 80), platform: opt(car.platform, 80), years: opt(car.years, 40) },
+    title: e.title,
+    body: typeof e.body === 'string' ? e.body.slice(0, 20000) : '',
+    data: e.data && typeof e.data === 'object' && !Array.isArray(e.data) ? (e.data as Record<string, unknown>) : undefined,
+    sources,
+    addedBy: e.addedBy === 'ai' ? 'ai' : 'owner',
+    at: typeof e.at === 'number' ? e.at : 0,
+  };
+}
+
+// Throws when the read fails, so a writer does not save over what is stored.
+// A writer passes keepAside: entries that fail the check are copied to
+// `<key>.damaged` first, because the list it writes back is the shorter one.
+async function loadKbStrict(keepAside = false): Promise<KbEntry[]> {
+  const list = await readJsonStrict<unknown[]>(KEY, () => [], isList);
+  const kept: KbEntry[] = [];
+  const rejected: unknown[] = [];
+  for (const raw of list) {
+    const e = cleanKbEntry(raw);
+    if (e) kept.push(e);
+    else rejected.push(raw);
+  }
+  if (keepAside && rejected.length) {
+    let earlier: unknown[] = [];
+    try {
+      const old = await AsyncStorage.getItem(`${KEY}.damaged`);
+      const parsed = old ? JSON.parse(old) : [];
+      if (Array.isArray(parsed)) earlier = parsed;
+    } catch {
+      // an unreadable earlier copy is replaced
+    }
+    await AsyncStorage.setItem(`${KEY}.damaged`, JSON.stringify([...earlier, ...rejected].slice(-200))).catch(() => undefined);
+  }
+  return kept;
+}
+
 export async function loadKb(): Promise<KbEntry[]> {
   try {
-    const raw = await AsyncStorage.getItem(KEY);
-    return raw ? (JSON.parse(raw) as KbEntry[]) : [];
+    return await loadKbStrict();
   } catch {
     return [];
   }
@@ -72,8 +130,12 @@ const slug = (s: string) =>
 // Saves an entry on the phone and, when the token is there, in the repo.
 export async function saveKb(e: Omit<KbEntry, 'id' | 'at'>): Promise<{ entry: KbEntry; shared: boolean; error?: string }> {
   const entry: KbEntry = { ...e, id: `${slug(e.car.make)}-${slug(e.car.model ?? 'all')}-${e.kind}-${slug(e.title)}`, at: Date.now() };
-  const list = await loadKb();
-  await storeKb([entry, ...list.filter((x) => x.id !== entry.id)]);
+  try {
+    const list = await loadKbStrict(true);
+    await storeKb([entry, ...list.filter((x) => x.id !== entry.id)]);
+  } catch {
+    // The stored entries could not be read: they are left as they are.
+  }
   if (!(await githubReady())) return { entry, shared: false };
   try {
     await writeFile(`kb/entries/${slug(e.car.make)}/${entry.id}.json`, JSON.stringify(entry, null, 1), `Knowledge: ${entry.title} (${e.car.make} ${e.car.model ?? ''})`.trim());
@@ -94,15 +156,21 @@ export async function syncKb(): Promise<number> {
   } catch {
     shas = {};
   }
-  const list = await loadKb();
+  let list: KbEntry[];
+  try {
+    list = await loadKbStrict(true);
+  } catch {
+    // The stored entries could not be read: try again next start.
+    return 0;
+  }
   let added = 0;
   for (const f of files) {
     if (!f.path.endsWith('.json') || shas[f.path] === f.sha) continue;
     const text = await readFile(f.path).catch(() => null);
     if (!text) continue;
     try {
-      const e = JSON.parse(text) as KbEntry;
-      if (!e.id || !e.title) continue;
+      const e = cleanKbEntry(JSON.parse(text));
+      if (!e) continue;
       const i = list.findIndex((x) => x.id === e.id);
       if (i >= 0) list[i] = e;
       else list.unshift(e);

@@ -1057,6 +1057,7 @@ export const SECTIONS: Record<string, Help> = {
       'Automatic sending uses the GitHub token built into this app, or one pasted under Developer options and kept in the phone keychain.',
       'Findings not sent yet wait on this phone and go by themselves the next time the app opens.',
       'Learn my car has a switch to keep one run on this phone.',
+      'Switch off Send findings to stop all of this. Only a button you tap to send still sends, and files already waiting stay on the phone.',
     ],
   },
   settingsTroubleshooting: {

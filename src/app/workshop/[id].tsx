@@ -1,6 +1,6 @@
 import { router, Stack, useIsFocused, useLocalSearchParams } from 'expo-router';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Pressable, StyleSheet, Switch, Text, View } from 'react-native';
+import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 import { CodingItem, codingItemsFor, fitsStyle, isOn, placeLabel, withItem } from '../../coding/items';
 import { preflightCheck } from '../../coding/preflight';
 import { groupLabels } from '../../data/groupLabels';
@@ -16,7 +16,7 @@ import { pidInfo } from '../../obd/pids';
 import { useSettings } from '../../settings';
 import { useConnection } from '../../state';
 import { MONO, radius, space, type, useTheme } from '../../theme';
-import { TOOLS, Button, ConfirmSheet, Field, Group, ListRow, NeedsConnection, Notice, Pill, Screen, Segmented, success, tap } from '../../ui';
+import { TOOLS, Button, ConfirmSheet, Field, Group, ListRow, NeedsConnection, Notice, Pill, Screen, Segmented, Stepper, success, tap, Toggle, ToggleRow } from '../../ui';
 import { useGarage, vehicleTitle } from '../../vehicle/garage';
 import { SECTIONS } from '../../help';
 import { FaultRow } from '../../components/CodeRow';
@@ -187,6 +187,8 @@ export default function ControlModule() {
   const readFaults = () => run('faults', async () => setFaults(await client.readModuleFaults(def)));
   const clearFaults = () =>
     run('clear', async () => {
+      const wrong = await conn.verifyCar();
+      if (wrong) throw new Error(wrong);
       const before = faults?.faults.map((f) => f.code) ?? [];
       // Clearing is allowed with the engine running, the same as the health check.
       await client.clearModuleFaults(def);
@@ -255,8 +257,13 @@ export default function ControlModule() {
   const writeCoding = (target: number[], what: string, note?: string) =>
     run('write', async () => {
       if (!coding) return;
+      const wrong = await conn.verifyCar();
+      if (wrong) throw new Error(wrong);
       const saved = garage.latest(v.vin)?.codingOriginal ?? {};
-      if (!saved[def.id]) await garage.update(v.vin, { codingOriginal: { ...saved, [def.id]: toHex(coding) } });
+      // Nothing is written to the car unless the original coding is kept on the phone.
+      if (!saved[def.id] && !(await garage.update(v.vin, { codingOriginal: { ...saved, [def.id]: toHex(coding) } }, { durable: true }))) {
+        throw new Error('Pin16 could not save the original on this phone, so nothing was changed in the car. Free some space on the phone, then try again.');
+      }
       remember(coding, 'read');
       const res = await client.writeCoding(def, coding, target);
       // The write has returned, so the car may hold a new coding. Everything
@@ -360,10 +367,8 @@ export default function ControlModule() {
               {kwp ? (
                 <Group header="Live values by group" help={SECTIONS.moduleGroups} footer="This module speaks the older VW protocol: values come in numbered groups of 4. Field names come from public sources for this car.">
                   <View style={styles.pad}>
-                    <View style={styles.stepper}>
-                      <Button label="−" variant="secondary" onPress={() => readGroup(Math.max(1, group - 1))} disabled={!!busy} />
-                      <Text style={[type.title3, type.number, { color: t.text }]}>Group {group}</Text>
-                      <Button label="+" variant="secondary" onPress={() => readGroup(Math.min(255, group + 1))} disabled={!!busy} />
+                    <View style={[styles.stepper, { justifyContent: 'center' }]}>
+                      <Stepper label="Group" value={`Group ${group}`} width={96} disabled={!!busy} noLower={group <= 1} noHigher={group >= 255} onStep={(d) => readGroup(Math.min(255, Math.max(1, group + d)))} />
                     </View>
                     <Button label="Read group" variant="secondary" busy={busy === 'group'} disabled={!!busy} onPress={() => readGroup(group)} />
                     {cells?.map((c, i) => (
@@ -458,27 +463,15 @@ export default function ControlModule() {
                       const on = isOn(i, draft);
                       const was = isOn(i, coding);
                       return (
-                        <View key={i.id} style={[styles.setting, { borderColor: t.border, borderTopWidth: k ? StyleSheet.hairlineWidth : 0 }]}>
-                          <View style={{ flex: 1 }}>
-                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                              <Text style={[type.body, { color: t.text, flexShrink: 1 }]}>{i.title}</Text>
-                              {on !== was ? <Pill text="Changed" tone="accent" /> : null}
-                            </View>
-                            <Text style={[type.small, { color: t.muted }]}>
-                              {placeLabel(i).charAt(0).toUpperCase() + placeLabel(i).slice(1)}
-                              {i.confidence === 'low' ? ' · not tested on this car' : ''}
-                            </Text>
-                          </View>
-                          <Switch
-                            value={on}
-                            onValueChange={(x) => {
-                              tap();
-                              setDraft(withItem(i, draft, x));
-                            }}
-                            trackColor={{ true: t.green, false: t.sunken }}
-                            accessibilityLabel={i.title}
-                          />
-                        </View>
+                        <ToggleRow
+                          key={i.id}
+                          first={!k}
+                          title={i.title}
+                          badge={on !== was ? 'Changed' : undefined}
+                          subtitle={`${placeLabel(i).charAt(0).toUpperCase() + placeLabel(i).slice(1)}${i.confidence === 'low' ? ' · not tested on this car' : ''}`}
+                          value={on}
+                          onChange={(x) => setDraft(withItem(i, draft, x))}
+                        />
                       );
                     })}
                   </Group>
@@ -509,7 +502,8 @@ export default function ControlModule() {
                           <Pressable
                             key={i}
                             accessibilityRole="button"
-                            accessibilityLabel={`Byte ${i}, ${hex2(b)}`}
+                            accessibilityLabel={`Byte ${i}, ${hex2(b)}${b !== coding[i] ? ', changed' : ''}${hasName ? ', has named bits' : ''}`}
+                            accessibilityState={{ selected: openByte === i, expanded: openByte === i }}
                             onPress={() => setOpenByte(openByte === i ? null : i)}
                             style={[styles.byte, { backgroundColor: openByte === i ? t.accentSoft : b !== coding[i] ? t.raised : t.sunken, borderColor: hasName ? t.accent : 'transparent' }]}
                           >
@@ -523,14 +517,14 @@ export default function ControlModule() {
                       <View style={{ marginTop: space.md }}>
                         {[0, 1, 2, 3, 4, 5, 6, 7].map((bit) => (
                           <View key={bit} style={[styles.row, { borderColor: t.border }]}>
-                            <View style={{ flex: 1 }}>
+                            <View style={{ flex: 1 }} accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
                               <Text style={[type.body, { color: t.text }]}>{bitName(openByte, bit) ?? `Bit ${bit}`}</Text>
                               <Text style={[type.caption, { color: t.muted }]}>
                                 Byte {openByte}, bit {bit}
                                 {bitName(openByte, bit) ? '' : ' · no public name'}
                               </Text>
                             </View>
-                            <Switch value={(draft[openByte] & (1 << bit)) !== 0} onValueChange={(on) => toggleBit(openByte, bit, on)} trackColor={{ true: t.green, false: t.sunken }} accessibilityLabel={`Byte ${openByte} bit ${bit}`} />
+                            <Toggle value={(draft[openByte] & (1 << bit)) !== 0} onChange={(on) => toggleBit(openByte, bit, on)} label={`${bitName(openByte, bit) ?? `Bit ${bit}`}. Byte ${openByte}, bit ${bit}`} />
                           </View>
                         ))}
                       </View>
@@ -626,7 +620,7 @@ export default function ControlModule() {
 const styles = StyleSheet.create({
   hero: { flexDirection: 'row', alignItems: 'center', gap: space.md, padding: space.lg, borderRadius: radius.lg, marginBottom: space.lg },
   addr: { width: 52, height: 52, borderRadius: radius.md, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 4 },
-  addrText: { fontSize: 20, fontWeight: '800', fontFamily: MONO },
+  addrText: { ...type.title3, fontWeight: '800', fontFamily: MONO },
 
   pad: { padding: space.lg },
   stepper: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: space.md },

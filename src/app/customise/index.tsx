@@ -1,6 +1,6 @@
 import { router, useLocalSearchParams } from 'expo-router';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Linking, Pressable, StyleSheet, Switch, Text, View } from 'react-native';
+import { ActivityIndicator, Linking, Pressable, StyleSheet, Text, View } from 'react-native';
 import { PinMark } from '../../brand/PinMark';
 import { LinkLost } from '../../obd/transport';
 import { AdaptationItem, adaptationKey, adaptationResultText, adaptationsFor, canStep, clampToRow, formatAdaptation, inRange, isAdaptationKey, itemForKey, stepValue, valueFromHex, valueHex } from '../../coding/adaptations';
@@ -10,6 +10,7 @@ import { settingKey, sharedFits, sharedLearned } from '../../coding/shared';
 import { addDiary, SETTING_CHANGED, today } from '../../diary';
 import { addHistory } from '../../history';
 import { kbForCar, kbSettings, loadKb } from '../../kb';
+import { adaptRestoreMessage } from '../../coding/restoreLink';
 import { categoriesFor, modsForVehicle, STATUS_LABEL } from '../../mods/catalogue';
 import { MODULES } from '../../obd/modules';
 import { preflightCheck } from '../../coding/preflight';
@@ -19,7 +20,7 @@ import { CodingHistory } from '../../coding/history';
 import { loadCodingHistory, onCodingHistory, recordCodings } from '../../coding/historyStore';
 import { useConnection } from '../../state';
 import { space, type, useTheme } from '../../theme';
-import { TOOLS, Chips, ConfirmSheet, Field, GlowCard, Group, Icon, ListRow, NeedsConnection, Notice, Pill, Screen, Stepper, success, tap, tool } from '../../ui';
+import { TOOLS, announce, announceResult, liveRegion, Chips, ConfirmSheet, Field, GlowCard, Group, Icon, ListRow, NeedsConnection, Notice, Pill, Screen, Stepper, success, Toggle, tool } from '../../ui';
 import { TryResult, useGarage, vehicleTitle } from '../../vehicle/garage';
 import { SECTIONS } from '../../help';
 import { sendLogNow } from '../../share/sendLog';
@@ -43,12 +44,14 @@ type Pending =
   | { kind: 'learned'; setting: LearnedSetting; on: boolean }
   | { kind: 'forget'; setting: LearnedSetting }
   | { kind: 'restore'; module: string; top?: boolean }
+  | { kind: 'adaptRestore'; key: string }
   | null;
 
 // Shown beside the spinner while a change is written to the car.
 const WRITING = 'Writing. Keep this page open.';
 // Where the result of a put back from Backups shows: beside Backups.
 const RESTORE_MSG = 'restore';
+const ORIGINAL_NOT_SAVED = 'Pin16 could not save the original on this phone, so nothing was changed in the car. Free some space on the phone, then try again.';
 
 export default function Customise() {
   const t = useTheme();
@@ -116,6 +119,14 @@ export default function Customise() {
       alive.current = false;
     };
   }, []);
+  // A switch writes at once, so its result is the only feedback: say it aloud.
+  // A result shown in a Notice at the top is spoken by the Notice itself.
+  useEffect(() => {
+    if (message?.id && message.text) announceResult(message.text);
+  }, [message]);
+  useEffect(() => {
+    if (busy) announce(WRITING);
+  }, [busy]);
   // Coding history of this car (read-only here; Workshop puts one back).
   const [codingHist, setCodingHist] = useState<CodingHistory>({});
   const histVin = v?.vin;
@@ -199,10 +210,11 @@ export default function Customise() {
     const a = itemForKey(wantAdaptRestore);
     const orig = v.codingOriginal?.[wantAdaptRestore];
     if (!a || !orig) return;
-    const cur = adaptValues[wantAdaptRestore];
-    if (cur == null) setMessage({ tone: 'danger', text: `${a.title} did not answer, so it could not be read. Check the ignition is on, then tap Read settings again.` });
-    else if (cur === valueFromHex(orig)) setMessage({ tone: 'ok', text: `${a.title} already has its original value. Nothing to put back.` });
-    else void changeAdaptRef.current?.(a, valueFromHex(orig), { putBack: true, top: true });
+    // A link never writes to the car. It opens the same confirm sheet as the
+    // coding put back, and the owner taps Put back to write.
+    const now = adaptValues[wantAdaptRestore];
+    if (now == null || now === valueFromHex(orig)) setMessage(adaptRestoreMessage(a.title, now, valueFromHex(orig)));
+    else setPending({ kind: 'adaptRestore', key: wantAdaptRestore });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [wantAdaptRestore, adaptDone]);
 
@@ -229,6 +241,11 @@ export default function Customise() {
   }
 
   const originals = v.codingOriginal ?? {};
+  const adaptRestoreLine = (key: string) => {
+    const a = itemForKey(key);
+    const o = originals[key];
+    return a && o ? `Puts ${a.title} back to ${formatAdaptation(a, valueFromHex(o))}, the value it had before Pin16 first changed it.` : 'Puts the value back to what it was before Pin16 first changed it.';
+  };
   const ready = (i: CodingItem) => {
     const c = codings[i.module];
     if (reading && !checked.has(i.module) && !c) return false;
@@ -253,6 +270,12 @@ export default function Customise() {
   const run = async (p: Exclude<Pending, null>) => {
     setPending(null);
     if (!client) return;
+    if (p.kind === 'adaptRestore') {
+      const a = itemForKey(p.key);
+      const orig = v.codingOriginal?.[p.key];
+      if (a && orig) void changeAdaptRef.current?.(a, valueFromHex(orig), { putBack: true });
+      return;
+    }
     // The result shows under the switch that was used; a put back shows beside
     // Backups, or at the top when it was opened from the change timeline.
     let runId = p.kind === 'item' ? p.item.id : p.kind === 'restore' ? (p.top ? undefined : RESTORE_MSG) : p.setting.id;
@@ -265,6 +288,12 @@ export default function Customise() {
     setBusy(p.kind === 'item' ? p.item.id : p.kind === 'learned' ? p.setting.id : p.top ? `restore-top-${p.module}` : `restore-${p.module}`);
     setMessage(null);
     try {
+      // The saved car must be the connected car.
+      const wrong = await conn.verifyCar();
+      if (wrong) {
+        if (alive.current) setMessage({ id: runId, tone: 'danger', text: wrong });
+        return;
+      }
       // Read for the result line only: nothing stops or delays the write.
       const check = await preflight();
       const lowBattery = check.note ? ` ${check.note}` : '';
@@ -272,7 +301,11 @@ export default function Customise() {
       const saved = garage.latest(v.vin)?.codingOriginal ?? {};
       const fresh = ids.filter((id) => !saved[id]);
       const backups = { ...saved, ...Object.fromEntries(fresh.map((id) => [id, toHex(codings[id]!)])) };
-      if (fresh.length) await garage.update(v.vin, { codingOriginal: backups });
+      // Nothing is written to the car unless the original coding is kept on the phone.
+      if (fresh.length && !(await garage.update(v.vin, { codingOriginal: backups }, { durable: true }))) {
+        if (alive.current) setMessage({ id: runId, tone: 'danger', text: ORIGINAL_NOT_SAVED });
+        return;
+      }
       const what =
         p.kind === 'item'
           ? `${p.item.title} ${p.on ? 'on' : 'off'}`
@@ -315,7 +348,7 @@ export default function Customise() {
           client.sessionValues.set(moduleId, res.coding);
           if (alive.current) setCodings((old) => ({ ...old, [moduleId]: res.coding }));
           // The saved coding follows each write, so Put back decides from what the module holds now.
-          await garage.update(v.vin, { codingCache: cacheAfterWrite(garage.latest(v.vin)?.codingCache, [{ key: moduleId, hex: toHex(res.coding) }]) });
+          await garage.update(v.vin, { codingCache: cacheAfterWrite(garage.latest(v.vin)?.codingCache, [{ key: moduleId, hex: toHex(res.coding) }]) }, { durable: true });
           if (!did) void recordCodings(v.vin, [{ key: moduleId, hex: toHex(res.coding), source: res.ok ? 'written' : 'read' }]);
         }
         if (!res.ok) {
@@ -438,9 +471,23 @@ export default function Customise() {
     const show = (ok: boolean, text: string) => {
       if (!alive.current) return;
       if (o.top) setMessage({ tone: ok ? 'ok' : 'danger', text });
-      else setAdaptMsg((m) => ({ ...m, [key]: { ok, text } }));
+      else {
+        setAdaptMsg((m) => ({ ...m, [key]: { ok, text } }));
+        announceResult(text);
+      }
     };
     try {
+      const wrong = await conn.verifyCar();
+      if (wrong) {
+        show(false, wrong);
+        return;
+      }
+      // Nothing is written to the car unless the original value is kept on the phone.
+      const had = garage.latest(v.vin)?.codingOriginal ?? {};
+      if (!had[key] && !(await garage.update(v.vin, { codingOriginal: { ...had, [key]: valueHex(current) } }, { durable: true }))) {
+        show(false, ORIGINAL_NOT_SAVED);
+        return;
+      }
       const check = await preflight();
       const res = await client.saveAdaptation(def, a.channel, wanted);
       const result = adaptationResultText(a, wanted, res);
@@ -454,7 +501,7 @@ export default function Customise() {
       const moved = after != null && after !== before;
       if (result.ok || moved) {
         const nowValue = after ?? wanted;
-        await garage.update(v.vin, { codingCache: cacheAfterWrite(garage.latest(v.vin)?.codingCache, [{ key, hex: valueHex(nowValue) }]) });
+        await garage.update(v.vin, { codingCache: cacheAfterWrite(garage.latest(v.vin)?.codingCache, [{ key, hex: valueHex(nowValue) }]) }, { durable: true });
         const what = o.putBack ? `${a.title} original ${formatAdaptation(a, valueFromHex(original))} put back` : `${a.title} ${formatAdaptation(a, before)} to ${formatAdaptation(a, nowValue)}`;
         await addDiary({
           vin: v.vin,
@@ -592,26 +639,19 @@ export default function Customise() {
               const working = busy === i.id;
               return (
                 <View key={i.id} style={[styles.item, { borderColor: t.border, borderTopWidth: n ? StyleSheet.hairlineWidth : 0 }]}>
-                  <Pressable
-                    accessibilityRole="button"
-                    accessibilityLabel={`${i.title}, ${openId === i.id ? 'hide' : 'show'} details`}
-                    onPress={() => setOpenId(openId === i.id ? null : i.id)}
-                    style={{ flex: 1 }}
-                  >
-                    <Text style={[type.body, { color: t.text }]}>{i.title}</Text>
-                    {tried[i.id] || i.confidence === 'medium' ? (
-                      <View style={styles.badge}>{tried[i.id] ? <TriedPill r={tried[i.id]} /> : <Pill text="Reported by owners" />}</View>
-                    ) : null}
+                  {/* The row is a plain container: the details toggle, Technical, Source and the switch are separate elements, so VoiceOver reaches each. */}
+                  <View style={{ flex: 1 }}>
+                    <Pressable accessibilityRole="button" accessibilityState={{ expanded: openId === i.id }} onPress={() => setOpenId(openId === i.id ? null : i.id)}>
+                      <Text style={[type.body, { color: t.text }]}>{i.title}</Text>
+                      {tried[i.id] || i.confidence === 'medium' ? (
+                        <View style={styles.badge}>{tried[i.id] ? <TriedPill r={tried[i.id]} /> : <Pill text="Reported by owners" />}</View>
+                      ) : null}
+                      {/* The whole description shows; it is never cut short. */}
+                      <Text style={[type.sub, { color: t.muted, marginTop: openId === i.id ? 2 : 1 }, openId !== i.id && type.small]}>{stateText(i, on)}</Text>
+                    </Pressable>
                     {openId === i.id ? (
                       <>
-                        <Text style={[type.sub, { color: t.muted, marginTop: 2 }]}>{stateText(i, on)}</Text>
-                        <Pressable
-                          accessibilityRole="button"
-                          accessibilityState={{ expanded: techId === i.id }}
-                          hitSlop={6}
-                          onPress={() => setTechId(techId === i.id ? null : i.id)}
-                          style={{ marginTop: 4, minHeight: 32, justifyContent: 'center', alignSelf: 'flex-start' }}
-                        >
+                        <Pressable accessibilityRole="button" accessibilityState={{ expanded: techId === i.id }} hitSlop={6} onPress={() => setTechId(techId === i.id ? null : i.id)} style={styles.link}>
                           <Text style={[type.small, { color: t.accentText }]}>{techId === i.id ? 'Hide technical' : 'Technical'}</Text>
                         </Pressable>
                         {techId === i.id ? (
@@ -621,32 +661,20 @@ export default function Customise() {
                               {defOf(i.module)?.name ?? i.module}, {placeLabel(i)}
                               {i.length && codings[i.module] && codings[i.module]!.length !== i.length ? `. The source car’s coding is ${i.length} bytes; yours is ${codings[i.module]!.length}, so check the result in the car.` : ''}
                             </Text>
-                            <Pressable accessibilityRole={i.sources[0].url ? 'link' : 'text'} disabled={!i.sources[0].url} hitSlop={6} onPress={() => i.sources[0].url && Linking.openURL(i.sources[0].url)} style={{ marginTop: 6 }}>
+                            <Pressable accessibilityRole={i.sources[0].url ? 'link' : 'text'} disabled={!i.sources[0].url} hitSlop={6} onPress={() => i.sources[0].url && Linking.openURL(i.sources[0].url)} style={styles.link}>
                               <Text style={[type.small, { color: i.sources[0].url ? t.accentText : t.muted }]}>Source: {i.sources[0].label}</Text>
                             </Pressable>
                           </>
                         ) : null}
                       </>
-                    ) : (
-                      // The whole description shows; it is never cut short.
-                      <Text style={[type.small, { color: t.muted, marginTop: 1 }]}>{stateText(i, on)}</Text>
-                    )}
-                    {message?.id === i.id ? <Text style={[type.small, { color: message.tone === 'ok' ? t.ok : t.danger, marginTop: 4 }]}>{message.text}</Text> : null}
+                    ) : null}
+                    {message?.id === i.id ? <Text accessibilityLiveRegion={liveRegion} style={[type.small, { color: message.tone === 'ok' ? t.ok : t.danger, marginTop: 4 }]}>{message.text}</Text> : null}
                     {working ? <Text style={[type.small, { color: t.muted, marginTop: 4 }]}>{WRITING}</Text> : null}
-                  </Pressable>
+                  </View>
                   {working ? (
-                    <ActivityIndicator color={t.accentText} />
+                    <ActivityIndicator color={t.accentText} accessibilityLabel="Writing" />
                   ) : (
-                    <Switch
-                      value={on}
-                      disabled={!!busy || !checked.has(i.module)}
-                      trackColor={{ true: t.green, false: t.sunken }}
-                      accessibilityLabel={i.title}
-                      onValueChange={(next) => {
-                        tap();
-                        run({ kind: 'item', item: i, on: next });
-                      }}
-                    />
+                    <Toggle value={on} disabled={!!busy || !checked.has(i.module)} label={i.title} onChange={(next) => run({ kind: 'item', item: i, on: next })} />
                   )}
                 </View>
               );
@@ -695,22 +723,13 @@ export default function Customise() {
                       .join(', ')}
                     {` · from your ${s.from}${s.tier === 2 ? ' (same part, another revision)' : ''}`}
                   </Text>
-                  {message?.id === s.id ? <Text style={[type.small, { color: message.tone === 'ok' ? t.ok : t.danger, marginTop: 4 }]}>{message.text}</Text> : null}
+                  {message?.id === s.id ? <Text accessibilityLiveRegion={liveRegion} style={[type.small, { color: message.tone === 'ok' ? t.ok : t.danger, marginTop: 4 }]}>{message.text}</Text> : null}
                   {working ? <Text style={[type.small, { color: t.muted, marginTop: 4 }]}>{WRITING}</Text> : null}
                 </View>
                 {working ? (
                   <ActivityIndicator color={t.accentText} />
                 ) : (
-                  <Switch
-                    value={on}
-                    disabled={!!busy || learnedKeys(s).some((k) => !checked.has(k))}
-                    trackColor={{ true: t.green, false: t.sunken }}
-                    accessibilityLabel={s.title}
-                    onValueChange={(next) => {
-                      tap();
-                      run({ kind: 'learned', setting: s, on: next });
-                    }}
-                  />
+                  <Toggle value={on} disabled={!!busy || learnedKeys(s).some((k) => !checked.has(k))} label={s.title} onChange={(next) => run({ kind: 'learned', setting: s, on: next })} />
                 )}
               </View>
             );
@@ -736,22 +755,13 @@ export default function Customise() {
                   <Pressable accessibilityRole="button" hitSlop={6} disabled={!!busy} onPress={() => setPending({ kind: 'forget', setting: s })} style={{ marginTop: 2, minHeight: 44, justifyContent: 'center', alignSelf: 'flex-start' }}>
                     <Text style={[type.small, { color: t.accentText }]}>Forget</Text>
                   </Pressable>
-                  {message?.id === s.id ? <Text style={[type.small, { color: message.tone === 'ok' ? t.ok : t.danger, marginTop: 4 }]}>{message.text}</Text> : null}
+                  {message?.id === s.id ? <Text accessibilityLiveRegion={liveRegion} style={[type.small, { color: message.tone === 'ok' ? t.ok : t.danger, marginTop: 4 }]}>{message.text}</Text> : null}
                   {working ? <Text style={[type.small, { color: t.muted, marginTop: 4 }]}>{WRITING}</Text> : null}
                 </View>
                 {working ? (
                   <ActivityIndicator color={t.accentText} />
                 ) : (
-                  <Switch
-                    value={on}
-                    disabled={!!busy || learnedKeys(s).some((k) => !checked.has(k))}
-                    trackColor={{ true: t.green, false: t.sunken }}
-                    accessibilityLabel={s.title}
-                    onValueChange={(next) => {
-                      tap();
-                      run({ kind: 'learned', setting: s, on: next });
-                    }}
-                  />
+                  <Toggle value={on} disabled={!!busy || learnedKeys(s).some((k) => !checked.has(k))} label={s.title} onChange={(next) => run({ kind: 'learned', setting: s, on: next })} />
                 )}
               </View>
             );
@@ -788,7 +798,7 @@ export default function Customise() {
                   return (
                     <View key={key} style={[styles.adapt, { borderColor: t.border, borderTopWidth: n ? StyleSheet.hairlineWidth : 0 }]}>
                       <View style={[styles.item, { paddingVertical: 0, paddingHorizontal: 0 }]}>
-                        <Pressable accessibilityRole="button" accessibilityLabel={`${a.title}, ${adaptOpen === key ? 'hide' : 'show'} details`} onPress={() => setAdaptOpen(adaptOpen === key ? null : key)} style={{ flex: 1 }}>
+                        <Pressable accessibilityRole="button" accessibilityState={{ expanded: adaptOpen === key }} onPress={() => setAdaptOpen(adaptOpen === key ? null : key)} style={{ flex: 1 }}>
                           <Text style={[type.body, { color: t.text }]}>{a.title}</Text>
                           <Text style={[type.small, { color: t.muted, marginTop: 1 }]}>
                             Now {formatAdaptation(a, cur)}
@@ -796,9 +806,9 @@ export default function Customise() {
                           </Text>
                         </Pressable>
                         {working ? (
-                          <ActivityIndicator color={t.accentText} />
+                          <ActivityIndicator color={t.accentText} accessibilityLabel="Writing" />
                         ) : !a.choices && !wide ? (
-                          <Stepper value={formatAdaptation(a, cur)} width={64} disabled={adaptLocked} noLower={!canStep(a, cur, -1)} noHigher={!canStep(a, cur, 1)} onStep={(d) => void changeAdaptRef.current?.(a, stepValue(a, cur, d))} />
+                          <Stepper label={a.title} value={formatAdaptation(a, cur)} width={64} disabled={adaptLocked} noLower={!canStep(a, cur, -1)} noHigher={!canStep(a, cur, 1)} onStep={(d) => void changeAdaptRef.current?.(a, stepValue(a, cur, d))} />
                         ) : null}
                       </View>
                       {a.choices ? (
@@ -839,13 +849,13 @@ export default function Customise() {
                             {defOf(a.module)?.name ?? a.module}, adaptation channel {a.channel}. {a.choices ? '' : `${a.min} to ${a.max}${a.unit ? ` ${a.unit}` : ''}, steps of ${a.step}.`}
                           </Text>
                           {a.needs ? <Text style={[type.small, { color: t.muted, marginTop: 4 }]}>{a.needs}</Text> : null}
-                          <Pressable accessibilityRole="link" hitSlop={6} onPress={() => Linking.openURL(a.sources[0].url)} style={{ marginTop: 6 }}>
+                          <Pressable accessibilityRole="link" hitSlop={6} onPress={() => Linking.openURL(a.sources[0].url)} style={styles.link}>
                             <Text style={[type.small, { color: t.accentText }]}>Source: {a.sources[0].label}</Text>
                           </Pressable>
                         </>
                       ) : null}
                       {working ? <Text style={[type.small, { color: t.muted, marginTop: 4 }]}>Writing. Keep this page open.</Text> : null}
-                      {msg?.text ? <Text style={[type.small, { color: msg.ok ? t.ok : t.danger, marginTop: 4 }]}>{msg.text}</Text> : null}
+                      {msg?.text ? <Text accessibilityLiveRegion={liveRegion} style={[type.small, { color: msg.ok ? t.ok : t.danger, marginTop: 4 }]}>{msg.text}</Text> : null}
                       {origValue != null && origValue !== cur ? (
                         <Pressable accessibilityRole="button" hitSlop={6} disabled={adaptLocked} onPress={() => void changeAdaptRef.current?.(a, origValue, { putBack: true })} style={{ paddingVertical: 14, alignSelf: 'flex-start' }}>
                           <Text style={[type.small, { color: t.accentText }]}>Put back original ({formatAdaptation(a, origValue)})</Text>
@@ -962,11 +972,19 @@ export default function Customise() {
         title={
           pending?.kind === 'forget'
             ? `Forget ${pending.setting.title}?`
-            : pending?.kind === 'restore'
-              ? 'Put back the original coding?'
-              : ''
+            : pending?.kind === 'adaptRestore'
+              ? 'Put back the original value?'
+              : pending?.kind === 'restore'
+                ? 'Put back the original coding?'
+                : ''
         }
-        lines={pending?.kind === 'forget' ? ['Removes the switch from Pin16. The car keeps whatever is set now.'] : [`Puts back the coding ${(defOf(pending?.kind === 'restore' ? pending.module : '')?.name ?? 'this module')} had before Pin16 first changed it.`]}
+        lines={
+          pending?.kind === 'forget'
+            ? ['Removes the switch from Pin16. The car keeps whatever is set now.']
+            : pending?.kind === 'adaptRestore'
+              ? [adaptRestoreLine(pending.key)]
+              : [`Puts back the coding ${(defOf(pending?.kind === 'restore' ? pending.module : '')?.name ?? 'this module')} had before Pin16 first changed it.`]
+        }
         confirmLabel={pending?.kind === 'forget' ? 'Forget' : 'Put back'}
         onCancel={() => setPending(null)}
         onConfirm={() => pending && run(pending)}
@@ -988,5 +1006,7 @@ const styles = StyleSheet.create({
   item: { flexDirection: 'row', alignItems: 'center', gap: space.md, paddingVertical: space.md, paddingHorizontal: space.lg },
   // A badge always sits on its own line under the setting's name.
   badge: { flexDirection: 'row', marginTop: 4 },
+  // A text link: a 44 pt target.
+  link: { minHeight: 44, justifyContent: 'center', alignSelf: 'flex-start' },
 
 });

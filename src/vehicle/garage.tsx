@@ -3,6 +3,7 @@ import type { SensorRow } from '../obd/sensors';
 // Saved vehicles, keyed by VIN, kept on the phone with AsyncStorage.
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { AppState } from 'react-native';
 import type { LearnedSetting, Snapshot } from '../coding/learn';
 import type { ServiceReset } from '../service/obdReset';
 import type { BatteryTest } from '../obd/battery';
@@ -142,7 +143,9 @@ interface Garage {
   vehicles: Vehicle[];
   loaded: boolean;
   upsertFromScan(vin: string | null, diesel: boolean, milOn: boolean): Promise<Vehicle>;
-  update(vin: string, patch: Partial<Vehicle>): Promise<void>;
+  // durable: write to storage now and resolve false when it could not be kept.
+  // Without it the change shows at once and is stored within about a second.
+  update(vin: string, patch: Partial<Vehicle>, opts?: { durable?: boolean }): Promise<boolean>;
   remove(vin: string): Promise<void>;
   get(vin: string | null | undefined): Vehicle | undefined;
   // The newest saved copy, including updates not drawn yet (for long async flows).
@@ -182,6 +185,14 @@ export function GarageProvider({ children }: { children: React.ReactNode }) {
   // Every update builds on the newest list, not the one a screen last drew, so
   // two quick updates in one flow cannot undo each other.
   const current = useRef<Vehicle[]>([]);
+  // True when the stored list could not be read. Nothing is written until a
+  // read works, so an empty list never replaces the stored cars.
+  const readFailed = useRef(false);
+  // Storage writes are joined: a burst of updates (a sensor search or Learn my
+  // car) is written once, a second after the last change.
+  const dirty = useRef(false);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const writing = useRef<Promise<boolean>>(Promise.resolve(true));
 
   useEffect(() => {
     AsyncStorage.getItem(KEY)
@@ -196,19 +207,80 @@ export function GarageProvider({ children }: { children: React.ReactNode }) {
         }
         setVehicles(current.current);
       })
-      .catch(() => setVehicles([]))
+      .catch(() => {
+        readFailed.current = true;
+        setVehicles([]);
+      })
       .finally(() => setLoaded(true));
   }, []);
 
-  const save = useCallback(async (next: Vehicle[]) => {
-    current.current = next;
-    setVehicles(next);
+  // After a failed first read, tries again. When it works the stored cars are
+  // added back (a car kept in memory wins), and writing can start.
+  const readable = useCallback(async (): Promise<boolean> => {
+    if (!readFailed.current) return true;
     try {
-      await AsyncStorage.setItem(KEY, JSON.stringify(next));
+      const raw = await AsyncStorage.getItem(KEY);
+      let stored: Vehicle[] = [];
+      try {
+        const list = raw ? JSON.parse(raw) : [];
+        if (Array.isArray(list)) stored = list as Vehicle[];
+      } catch {
+        if (raw) await AsyncStorage.setItem(`${KEY}.damaged`, raw).catch(() => undefined);
+      }
+      const have = new Set(current.current.map((v) => v.vin));
+      current.current = [...current.current, ...stored.filter((v) => !have.has(v.vin))];
+      setVehicles(current.current);
+      readFailed.current = false;
+      return true;
     } catch {
-      // Storage can fail in private browser windows; the app still works this session.
+      return false;
     }
   }, []);
+
+  // Writes the newest list now. Resolves true when it is stored.
+  const flush = useCallback((): Promise<boolean> => {
+    if (timer.current) {
+      clearTimeout(timer.current);
+      timer.current = null;
+    }
+    const run = writing.current.then(async () => {
+      if (!dirty.current) return true;
+      if (!(await readable())) return false;
+      dirty.current = false;
+      try {
+        await AsyncStorage.setItem(KEY, JSON.stringify(current.current));
+        return true;
+      } catch {
+        // Storage can fail (full, or a private browser window); the app still works this session.
+        dirty.current = true;
+        return false;
+      }
+    });
+    writing.current = run;
+    return run;
+  }, [readable]);
+
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (s) => {
+      if (s !== 'active') void flush();
+    });
+    return () => {
+      sub.remove();
+      void flush();
+    };
+  }, [flush]);
+
+  const save = useCallback(
+    (next: Vehicle[], durable = false): Promise<boolean> => {
+      current.current = next;
+      setVehicles(next);
+      dirty.current = true;
+      if (durable) return flush();
+      if (!timer.current) timer.current = setTimeout(() => void flush(), 1000);
+      return Promise.resolve(true);
+    },
+    [flush],
+  );
 
   const value = useMemo<Garage>(
     () => ({
@@ -239,11 +311,12 @@ export function GarageProvider({ children }: { children: React.ReactNode }) {
         await save([fresh, ...current.current.filter((v) => v.vin !== vin)]);
         return fresh;
       },
-      update: async (vin, patch) => {
-        await save(current.current.map((v) => (v.vin === vin ? { ...v, ...patch } : v)));
-      },
+      update: (vin, patch, opts) => save(current.current.map((v) => (v.vin === vin ? { ...v, ...patch } : v)), !!opts?.durable),
       remove: async (vin) => {
-        await save(current.current.filter((v) => v.vin !== vin));
+        await save(
+          current.current.filter((v) => v.vin !== vin),
+          true,
+        );
       },
     }),
     [vehicles, loaded, save],

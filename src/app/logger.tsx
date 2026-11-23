@@ -3,14 +3,14 @@
 import { useDisplay } from '../fonts';
 import { router, Stack, useFocusEffect } from 'expo-router';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Modal, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
+import { Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SECTIONS } from '../help';
 import { allowSleep, stayAwake } from '../keepAwake';
 import type { ElmClient } from '../obd/elm';
 import { toUserUnits, useSettings } from '../settings';
 import { useConnection } from '../state';
 import { radius, space, type, useTheme } from '../theme';
-import { TOOLS, Body, Button, GlowCard, GuideButton, Group, Icon, ListRow, NeedsConnection, Notice, Screen, SearchField, Stepper, success, tap, tool } from '../ui';
+import { Body, Button, GlowCard, Group, GuideButton, Icon, ListRow, NeedsConnection, Notice, Screen, SearchField, SheetPage, Stepper, success, tap, ToggleRow, tool, TOOLS } from '../ui';
 import { useGarage, Vehicle, vehicleTitle } from '../vehicle/garage';
 import { AutoRule, clampRule, DEFAULT_AUTO, LIMITS, stepStopDelay, stepThreshold, TRIGGER_LABEL, TRIGGER_PID, TriggerKind, withKind } from '../logger/auto';
 import { formatDuration, formatWhen, LogChannel, LogSummary, obdKey } from '../logger/format';
@@ -195,24 +195,15 @@ function Recorder({ client, vehicle }: { client: ElmClient; vehicle: Vehicle }) 
       ) : null}
 
       <Group header="Route and screen off" help={SECTIONS.logGps} footer={Platform.OS === 'web' ? 'Not available in the web preview.' : 'Uses the phone’s GPS while recording or waiting to start. A blue mark at the top of the screen shows it is on.'}>
-        <ListRow
+        <ToggleRow
           first
           icon="map-marker-path"
           iconColour={TOOLS.logger.colour}
           title="Record route, keep going with the screen off"
           subtitle={recording && gps ? (status.gps === 'on' ? 'GPS on' : status.gps ? 'GPS not available' : 'Starting GPS…') : undefined}
-          right={
-            <Switch
-              value={gps}
-              disabled={recording || armed}
-              trackColor={{ true: t.green, false: t.sunken }}
-              accessibilityLabel="Record route and keep going with the screen off"
-              onValueChange={(on) => {
-                tap();
-                setGps(on);
-              }}
-            />
-          }
+          value={gps}
+          disabled={recording || armed}
+          onChange={setGps}
         />
       </Group>
 
@@ -233,24 +224,15 @@ function Recorder({ client, vehicle }: { client: ElmClient; vehicle: Vehicle }) 
         help={SECTIONS.logAuto}
         footer={options && !kinds.length ? 'This car does not report engine speed, pedal or throttle, so auto-start cannot work.' : undefined}
       >
-        <ListRow
+        <ToggleRow
           first
           icon="play-circle-outline"
           iconColour={TOOLS.logger.colour}
           title="Auto-start"
           subtitle={rule.on ? `Above ${rule.above} ${lim.unit}, stops ${rule.stopAfterS} s after` : 'Start and stop by itself'}
-          right={
-            <Switch
-              value={rule.on}
-              disabled={!canAuto || recording}
-              trackColor={{ true: t.green, false: t.sunken }}
-              accessibilityLabel="Auto-start"
-              onValueChange={(on) => {
-                tap();
-                setRule((r) => ({ ...(kinds.includes(r.kind) ? r : withKind(r, kinds[0])), on }));
-              }}
-            />
-          }
+          value={rule.on}
+          disabled={!canAuto || recording}
+          onChange={(on) => setRule((r) => ({ ...(kinds.includes(r.kind) ? r : withKind(r, kinds[0])), on }))}
         />
         {rule.on
           ? kinds.map((k) => (
@@ -259,8 +241,8 @@ function Recorder({ client, vehicle }: { client: ElmClient; vehicle: Vehicle }) 
           : null}
         {rule.on && kinds.length ? (
           <>
-            <ListRow title="Start above" right={<Stepper value={`${rule.above} ${lim.unit}`} disabled={recording} onStep={(d) => setRule((r) => stepThreshold(r, d))} />} />
-            <ListRow title="Stop after" right={<Stepper value={`${rule.stopAfterS} s`} disabled={recording} onStep={(d) => setRule((r) => stepStopDelay(r, d))} />} />
+            <ListRow control title="Start above" right={<Stepper label="Start above" value={`${rule.above} ${lim.unit}`} disabled={recording} onStep={(d) => setRule((r) => stepThreshold(r, d))} />} />
+            <ListRow control title="Stop after" right={<Stepper label="Stop after" value={`${rule.stopAfterS} s`} disabled={recording} onStep={(d) => setRule((r) => stepStopDelay(r, d))} />} />
           </>
         ) : null}
       </Group>
@@ -309,44 +291,32 @@ function ValuePicker({ visible, options, selected, onClose }: { visible: boolean
       setQ('');
     }
   }, [visible, selected]);
-  const ios = Platform.OS === 'ios';
   const shown = q ? options.filter((o) => `${o.channel.label} ${o.section}`.toLowerCase().includes(q.toLowerCase())) : options;
   const sections = [...new Set(shown.map((o) => o.section))];
   const toggle = (k: string) => setDraft((d) => (d.includes(k) ? d.filter((x) => x !== k) : [...d, k]));
   return (
-    <Modal visible={visible} animationType="slide" presentationStyle={ios ? 'pageSheet' : undefined} transparent={!ios} onRequestClose={() => onClose(null)}>
-      <View style={[styles.sheetPage, { backgroundColor: t.bg }, !ios && styles.sheetWeb]}>
-        <View style={[styles.sheetBar, { borderColor: t.border }]}>
-          <Pressable accessibilityRole="button" hitSlop={10} onPress={() => onClose(null)} style={styles.barButton}>
-            <Text style={[styles.barText, { color: t.accentText }]}>Cancel</Text>
-          </Pressable>
-          <Text style={[styles.barTitle, { color: t.text }]}>Values to record</Text>
-          <Pressable accessibilityRole="button" hitSlop={10} onPress={() => onClose(draft)} style={[styles.barButton, { alignItems: 'flex-end' }]}>
-            <Text style={[styles.barText, { color: t.accentText, fontWeight: '600' }]}>Done</Text>
-          </Pressable>
-        </View>
-        <ScrollView contentContainerStyle={{ padding: space.lg, paddingBottom: 60 }} keyboardShouldPersistTaps="handled">
-          <SearchField value={q} onChange={setQ} placeholder="Search values" />
-          <Text style={[styles.sheetNote, { color: t.muted }]}>
-            {draft.length} of {options.length} chosen. Fewer values record faster.
-          </Text>
-          {!options.length ? <Body muted>The car did not report any values to record.</Body> : null}
-          {sections.map((s) => (
-            <Group key={s} header={s}>
-              {shown
-                .filter((o) => o.section === s)
-                .map((o, i) => {
-                  const unit = o.channel.unit;
-                  return (
-                    <ListRow key={o.channel.key} first={i === 0} title={o.channel.label} value={unit} noChevron selected={draft.includes(o.channel.key)} onPress={() => toggle(o.channel.key)} />
-                  );
-                })}
-            </Group>
-          ))}
-          <Button label="Clear selection" variant="ghost" onPress={() => setDraft([])} />
-        </ScrollView>
-      </View>
-    </Modal>
+    <SheetPage visible={visible} title="Values to record" onCancel={() => onClose(null)} onDone={() => onClose(draft)}>
+      <ScrollView contentContainerStyle={{ padding: space.lg, paddingBottom: 60 }} keyboardShouldPersistTaps="handled" keyboardDismissMode="interactive" automaticallyAdjustKeyboardInsets>
+        <SearchField value={q} onChange={setQ} placeholder="Search values" />
+        <Text style={[styles.sheetNote, { color: t.muted }]}>
+          {draft.length} of {options.length} chosen. Fewer values record faster.
+        </Text>
+        {!options.length ? <Body muted>The car did not report any values to record.</Body> : null}
+        {sections.map((s) => (
+          <Group key={s} header={s}>
+            {shown
+              .filter((o) => o.section === s)
+              .map((o, i) => {
+                const unit = o.channel.unit;
+                return (
+                  <ListRow key={o.channel.key} first={i === 0} title={o.channel.label} value={unit} noChevron selected={draft.includes(o.channel.key)} onPress={() => toggle(o.channel.key)} />
+                );
+              })}
+          </Group>
+        ))}
+        <Button label="Clear selection" variant="ghost" onPress={() => setDraft([])} />
+      </ScrollView>
+    </SheetPage>
   );
 }
 
@@ -387,11 +357,5 @@ const styles = StyleSheet.create({
   big: { fontSize: 48, lineHeight: 56, fontWeight: '700', letterSpacing: -1, marginVertical: space.xs },
   // A capsule like every button, 96 pt tall so it can be hit without looking.
   marker: { marginTop: space.md, minHeight: 96, borderRadius: 48, alignItems: 'center', justifyContent: 'center', flexDirection: 'row', gap: space.sm },
-  sheetPage: { flex: 1 },
-  sheetWeb: { marginTop: 60, borderTopLeftRadius: 14, borderTopRightRadius: 14, overflow: 'hidden' },
-  sheetBar: { flexDirection: 'row', alignItems: 'center', minHeight: 56, paddingHorizontal: space.lg, borderBottomWidth: StyleSheet.hairlineWidth },
-  barButton: { width: 80, minHeight: 44, justifyContent: 'center' },
-  barText: { fontSize: 17, letterSpacing: -0.41 },
-  barTitle: { flex: 1, textAlign: 'center', fontSize: 17, fontWeight: '600', letterSpacing: -0.41 },
   sheetNote: { fontSize: 13, marginVertical: space.lg, marginLeft: space.lg },
 });

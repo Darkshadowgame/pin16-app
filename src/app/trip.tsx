@@ -1,4 +1,5 @@
 // Trip computer. Maths and sources: src/monitors/trip.ts.
+import { sleep } from '../async';
 import { useDisplay } from '../fonts';
 import { useStayAwake } from '../keepAwake';
 import React, { useEffect, useRef, useState } from 'react';
@@ -13,7 +14,6 @@ import { space, type, useTheme } from '../theme';
 import { Button, ConfirmSheet, GlowCard, Group, ListRow, NeedsConnection, Notice, Screen, success } from '../ui';
 import { dateTimeText } from '../timeText';
 
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 export default function TripScreen() {
   const conn = useConnection();

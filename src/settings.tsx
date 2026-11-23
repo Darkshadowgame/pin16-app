@@ -2,7 +2,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { setBackgroundRuns } from './background';
 import { setAlertSounds } from './sound';
-import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 
 export interface Settings {
   speed: 'mph' | 'km/h';
@@ -15,6 +15,8 @@ export interface Settings {
   debugLog: boolean;
   // Send the adapter log to the findings repo by itself after each check or scan.
   autoSendLog: boolean;
+  // Send what Pin16 finds (sensors, Learn my car, Listen recordings, named values) to the findings repo.
+  sendFindings: boolean;
   // Where emailed findings go when automatic sending is not set up.
   sendTo: string;
   // Units follow the phone's region until the owner picks them.
@@ -50,7 +52,7 @@ export function regionUnits(region: string | null = phoneRegion()): Pick<Setting
   return { speed: MPH.has(region) ? 'mph' : 'km/h', temp: FAHRENHEIT.has(region) ? '°F' : '°C' };
 }
 
-const DEFAULTS: Settings = { speed: 'mph', temp: '°C', autoConnect: false, autoCheck: false, debugLog: true, autoSendLog: true, sendTo: '', speedAuto: true, tempAuto: true, developer: false, alertSounds: true, backgroundRuns: true };
+const DEFAULTS: Settings = { speed: 'mph', temp: '°C', autoConnect: false, autoCheck: false, debugLog: true, autoSendLog: true, sendFindings: true, sendTo: '', speedAuto: true, tempAuto: true, developer: false, alertSounds: true, backgroundRuns: true };
 const KEY = 'caristini.settings.v1';
 
 interface Ctx {
@@ -64,26 +66,55 @@ const SettingsCtx = createContext<Ctx>({ settings: DEFAULTS, loaded: false, set:
 export function SettingsProvider({ children }: { children: React.ReactNode }) {
   const [settings, setSettings] = useState<Settings>(DEFAULTS);
   const [loaded, setLoaded] = useState(false);
+  // The newest settings, so a change builds on the last one and is saved after the state change.
+  const latest = useRef<Settings>(DEFAULTS);
+  // Changes made before the stored settings were read, applied once they are.
+  const early = useRef<Partial<Settings>>({});
+  const ready = useRef(false);
+  // True when the stored settings could not be read: nothing is saved over them.
+  const unreadable = useRef(false);
   useEffect(() => {
     AsyncStorage.getItem(KEY)
       .then((raw) => {
-        const saved: Partial<Settings> & { unitsAuto?: boolean } = raw ? JSON.parse(raw) : {};
+        let saved: Partial<Settings> & { unitsAuto?: boolean } = {};
+        try {
+          saved = raw ? JSON.parse(raw) : {};
+        } catch {
+          // Damaged text is kept aside before the next save replaces it.
+          if (raw) AsyncStorage.setItem(`${KEY}.damaged`, raw).catch(() => undefined);
+        }
         const next = { ...DEFAULTS, ...saved };
         // Earlier versions kept one switch for both.
         if (saved.speedAuto == null && saved.unitsAuto != null) next.speedAuto = saved.unitsAuto;
         if (saved.tempAuto == null && saved.unitsAuto != null) next.tempAuto = saved.unitsAuto;
         const region = regionUnits();
-        setSettings({ ...next, ...(next.speedAuto ? { speed: region.speed } : {}), ...(next.tempAuto ? { temp: region.temp } : {}) });
+        const merged = { ...next, ...(next.speedAuto ? { speed: region.speed } : {}), ...(next.tempAuto ? { temp: region.temp } : {}), ...early.current };
+        latest.current = merged;
+        setSettings(merged);
+        if (Object.keys(early.current).length) AsyncStorage.setItem(KEY, JSON.stringify(merged)).catch(() => undefined);
       })
-      .catch(() => undefined)
-      .finally(() => setLoaded(true));
+      .catch(() => {
+        unreadable.current = true;
+      })
+      .finally(() => {
+        ready.current = true;
+        setLoaded(true);
+      });
   }, []);
   const set = useCallback(async (patch: Partial<Settings>) => {
-    setSettings((old) => {
-      const next = { ...old, ...patch };
-      AsyncStorage.setItem(KEY, JSON.stringify(next)).catch(() => undefined);
-      return next;
-    });
+    if (!ready.current) {
+      // The stored settings are not read yet: keep the change and apply it after them.
+      early.current = { ...early.current, ...patch };
+      latest.current = { ...latest.current, ...patch };
+      setSettings(latest.current);
+      return;
+    }
+    const next = { ...latest.current, ...patch };
+    latest.current = next;
+    setSettings(next);
+    // A failed read means the stored settings are unknown: the change shows but is not saved over them.
+    if (unreadable.current) return;
+    await AsyncStorage.setItem(KEY, JSON.stringify(next)).catch(() => undefined);
   }, []);
   useEffect(() => setAlertSounds(settings.alertSounds !== false), [settings.alertSounds]);
   useEffect(() => setBackgroundRuns(settings.backgroundRuns !== false), [settings.backgroundRuns]);

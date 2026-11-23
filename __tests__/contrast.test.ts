@@ -73,3 +73,21 @@ describe.each(Object.entries(themes))('%s theme contrast (WCAG AA, 4.5:1)', (_na
     expect(ratio(parse(t.onDanger).rgb, parse(t.danger).rgb)).toBeGreaterThanOrEqual(4.5);
   });
 });
+
+describe.each(Object.entries(themes))('%s theme control contrast (WCAG 1.4.11, 3:1)', (_name, t) => {
+  const grounds = ['bg', 'surface', 'sunken'] as const;
+  for (const g of grounds) {
+    it(`outline on ${g}`, () => {
+      expect(ratio(parse(t.outline).rgb, parse(t[g]).rgb)).toBeGreaterThanOrEqual(3);
+    });
+  }
+  it('switch off track on surface', () => {
+    expect(ratio(parse(t.switchOff).rgb, parse(t.surface).rgb)).toBeGreaterThanOrEqual(3);
+  });
+  it('glyph on the red tool square', () => {
+    expect(ratio(parse(t.onRed).rgb, parse(t.red).rgb)).toBeGreaterThanOrEqual(3);
+  });
+  it('white mark on the tab badge', () => {
+    expect(ratio(parse('#FFFFFF').rgb, parse(t.badge).rgb)).toBeGreaterThanOrEqual(4.5);
+  });
+});

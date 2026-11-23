@@ -1,6 +1,7 @@
 // The last knock monitor session of each car, kept on the phone so its peaks
 // and verdict can be read after the drive.
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { isRecord, readJsonStrict } from '../storageRead';
 import type { KnockSession } from './knock';
 
 export interface SavedKnock {
@@ -11,10 +12,14 @@ export interface SavedKnock {
 
 const KEY = 'caristini.knock.v1';
 
+// Throws when the read fails, so a writer does not save over what is stored.
+function allStrict(): Promise<Record<string, SavedKnock>> {
+  return readJsonStrict<Record<string, SavedKnock>>(KEY, () => ({}), isRecord);
+}
+
 async function all(): Promise<Record<string, SavedKnock>> {
   try {
-    const raw = await AsyncStorage.getItem(KEY);
-    return raw ? (JSON.parse(raw) as Record<string, SavedKnock>) : {};
+    return await allStrict();
   } catch {
     return {};
   }
@@ -28,11 +33,11 @@ export async function loadKnock(vin: string): Promise<SavedKnock | null> {
 export async function saveKnock(vin: string, session: KnockSession, at = Date.now()): Promise<SavedKnock | null> {
   if (!session.samples) return null;
   const saved: SavedKnock = { vin, at, session };
-  const list = await all();
   try {
+    const list = await allStrict();
     await AsyncStorage.setItem(KEY, JSON.stringify({ ...list, [vin]: saved }));
   } catch {
-    // Storage unavailable: the session still shows on screen.
+    // Storage unavailable, or the stored list could not be read: the session still shows on screen.
   }
   return saved;
 }

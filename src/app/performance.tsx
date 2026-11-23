@@ -1,3 +1,4 @@
+import { sleep } from '../async';
 import { useStayAwake } from '../keepAwake';
 import React, { useEffect, useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
@@ -208,7 +209,6 @@ function finish(test: PerfTest, r: Running, s: Sample, end: number, finishKmh?: 
 // ---------------------------------------------------------------------------
 
 const SPEED = pidInfo(0x0d)!;
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 function rangeLabel(r: CustomRange): string {
   const f = r.unit === 'mph' ? r.fromKmh / KMH_PER_MPH : r.fromKmh;

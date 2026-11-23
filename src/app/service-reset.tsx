@@ -178,6 +178,11 @@ export default function ServiceResetScreen() {
     setSending(true);
     stayAwake('service-reset');
     try {
+      const wrong = await conn.verifyCar();
+      if (wrong) {
+        if (alive.current) setMessage({ tone: 'danger', text: wrong });
+        return;
+      }
       setProgress({ value: 0, label: 'Resetting the service' });
       const res = await client.runServiceReset(reset, (i) => alive.current && setProgress({ value: (i + 1) / (reset.steps.length + 1), label: describeStep(reset.steps[i]) }));
       if (res.ok) {
@@ -220,6 +225,11 @@ export default function ServiceResetScreen() {
     stayAwake('service-reset');
     setProgress({ value: 0.5, label: 'Resetting the oil service' });
     try {
+      const wrong = await conn.verifyCar();
+      if (wrong) {
+        if (alive.current) setMessage({ tone: 'danger', text: wrong });
+        return;
+      }
       const check = await preflightCheck(client);
       const res = await client.saveAdaptation(cluster, OIL_RESET.channel, OIL_RESET.value);
       const w = oilResetWording(res);

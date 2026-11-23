@@ -1,8 +1,8 @@
 import { alertBuzz } from '../sound';
-import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { router, useIsFocused } from 'expo-router';
-import { LinearGradient } from 'expo-linear-gradient';
-import { Modal, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import React, { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import { router, Stack, useIsFocused } from 'expo-router';
+import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import Svg, { Polyline } from 'react-native-svg';
 import { allowSleep, stayAwake } from '../keepAwake';
 import { shareCsv } from '../logger/store';
 import { shareFileName } from '../timeText';
@@ -22,13 +22,14 @@ import { NamedText, NameTarget, NameValueForm } from '../components/NameValue';
 import { lookupValueName, ValueName } from '../data/valueNames';
 import { useValueNames } from '../data/valueNamesStore';
 import { radius, space, type, useTheme } from '../theme';
-void Title;
-import { Body, Button, Chip, ConfirmSheet, Field, Group, Icon, IconName, Label, ListRow, NeedsConnection, Notice, ProgressBar, SearchField, Title, tool, TOOLS } from '../ui';
+import { announce, Body, Button, Chip, ConfirmSheet, Field, Group, GuideButton, HeaderButton, Icon, IconName, Label, ListRow, NeedsConnection, Notice, ProgressBar, SearchField, SheetPage, Stepper, tool } from '../ui';
 import { AlertLevel, alertLevel, AlertRule, AlertTracker, holdPeak, needsRpm, Peak, setRule } from '../live/alerts';
 import { RateMeter, rateText } from '../live/rate';
 import { filterPids, loadSet, removeSet, saveSet, ValueSet } from '../live/sets';
 import { BOOST_PID } from '../live/boost';
 import { TileSheet } from '../live/LiveTiles';
+import { MAX_REC_ROWS, Reading, summarise, toCsv } from '../live/recording';
+import { createRateStore, RateStore } from '../live/rateStore';
 
 const HISTORY = 60; // samples kept per value for the trend line
 const RPM = 0x0c;
@@ -43,7 +44,6 @@ interface Series {
 
 // A recording not yet shared is kept while Pin16 is open, so leaving Live
 // data does not lose it. One at a time; a new recording replaces it.
-type Reading = { t: number; pid: number; v: number };
 let keptRecording: { vin: string | null; rows: Reading[] } | null = null;
 
 export function LiveScreen({ active = true }: { active?: boolean }) {
@@ -59,7 +59,8 @@ export function LiveScreen({ active = true }: { active?: boolean }) {
   const [series, setSeries] = useState<Record<number, Series>>({});
   const [paused, setPaused] = useState(false);
   const [picking, setPicking] = useState(false);
-  const [rate, setRate] = useState<{ readings: number; updates: number } | null>(null);
+  // The rate sits in its own store: a change redraws one line of text, not the grid.
+  const [rateStore] = useState<RateStore>(() => createRateStore());
   const meter = useRef(new RateMeter());
   const { settings } = useSettings();
   // Recording: every reading with its time, for a CSV.
@@ -119,7 +120,7 @@ export function LiveScreen({ active = true }: { active?: boolean }) {
     if (!client || !active || !onScreen || paused || !available) return;
     let running = true;
     meter.current.reset();
-    setRate(null);
+    rateStore.set(null);
     (async () => {
       let lastRpm: number | null = null;
       while (running) {
@@ -149,7 +150,7 @@ export function LiveScreen({ active = true }: { active?: boolean }) {
           const v = got.get(p.pid) ?? null;
           any = any || v != null;
           if (v != null) answered++;
-          if (v != null && recRef.current) recRef.current.push({ t: now - recStart.current, pid: p.pid, v });
+          if (v != null && recRef.current && recRef.current.length < MAX_REC_ROWS) recRef.current.push({ t: now - recStart.current, pid: p.pid, v });
           if (p.pid === 0x05 && v != null) {
             const shown = toUserUnits(v, '°C', settings);
             setAlert(v > 110 ? `Coolant at ${Math.round(shown.value)} ${shown.unit}. Slow down, stop when it is safe and let the engine cool.` : null);
@@ -158,7 +159,17 @@ export function LiveScreen({ active = true }: { active?: boolean }) {
           if (rule && got.has(p.pid)) levels.set(p.pid, alertLevel(rule, v, lastRpm));
         }
         // One buzz as a value crosses into its alert.
-        if (tracker.current.update(levels, now).length) alertBuzz('alert');
+        const crossed = tracker.current.update(levels, now);
+        if (crossed.length) alertBuzz('alert');
+        // Said aloud too, once per crossing: a colour change alone is silent.
+        for (const pid of crossed) {
+          const pp = available.find((x) => x.pid === pid);
+          const val = got.get(pid);
+          if (pp && val != null) {
+            const sh = toUserUnits(val, pp.unit, settings);
+            announce(`${pp.label}, ${sh.value.toFixed(pp.decimals)} ${sh.unit}, past the alert limit`);
+          }
+        }
         // One screen update per pass; values skipped for a busy adapter draw no gap.
         setSeries((old) => {
           const next = { ...old };
@@ -172,7 +183,7 @@ export function LiveScreen({ active = true }: { active?: boolean }) {
         if (recRef.current) setRecCount(recRef.current.length);
         if (any) {
           meter.current.add(answered, Date.now());
-          if (running) setRate(meter.current.rate());
+          if (running) rateStore.set(meter.current.rate());
         }
         if (!any && !busy) await new Promise((r) => setTimeout(r, 1500));
       }
@@ -191,6 +202,7 @@ export function LiveScreen({ active = true }: { active?: boolean }) {
     return () => allowSleep('live');
   }, [connected, active, onScreen]);
   const [shareError, setShareError] = useState<string | null>(null);
+  const openTile = useCallback((p: LivePid) => setEditing(p), []);
 
   const shown = useMemo(() => (available ?? []).filter((p) => watch.includes(p.pid)), [available, watch]);
   const rpmNow = series[RPM]?.last ?? null;
@@ -209,123 +221,83 @@ export function LiveScreen({ active = true }: { active?: boolean }) {
     );
   }
 
+  // Record and Stop: the page's one filled action, in the header.
+  const toggleRecording = () => {
+    if (!available?.length) return;
+    if (recording) {
+      setRecorded(recRef.current);
+      keptRecording = recRef.current?.length ? { vin: carVin, rows: recRef.current } : null;
+      recRef.current = null;
+      setRecording(false);
+      announce('Recording stopped');
+    } else {
+      keptRecording = null;
+      recRef.current = [];
+      recStart.current = Date.now();
+      setRecCount(0);
+      setRecorded(null);
+      setRecording(true);
+      announce('Recording');
+    }
+  };
+
   return (
     <View>
-      <SensorHub active={active} />
+      <Stack.Screen
+        options={{
+          headerRight: () => (
+            <View style={styles.headerRight}>
+              <HeaderButton icon={recording ? 'stop' : 'record-circle-outline'} label={recording ? 'Stop recording' : 'Record'} filled onPress={toggleRecording} />
+              <GuideButton id="live" />
+            </View>
+          ),
+        }}
+      />
+      {alert ? <Notice tone="danger" icon="alert-circle-outline" text={alert} /> : null}
+      {available && available.length === 0 ? <Notice text="The car did not report any standard live values." /> : null}
+      {recording ? (
+        <Notice icon="record-circle-outline" tone="accent" text={`Recording: ${recCount.toLocaleString('en-GB')} reading${recCount === 1 ? '' : 's'} so far.${recCount >= MAX_REC_ROWS ? ' The limit is reached, so no more are added.' : ''}`} />
+      ) : null}
+
+      {/* The readings come first: they are the job. */}
       <Label help={SECTIONS.liveStandard}>Standard readings (every car)</Label>
-      <Body muted small style={styles.intro}>
-        {available
-          ? `Watching ${shown.length} of ${available.length} values${
-              rate && settings.developer ? `: ${rateText(rate.readings)} readings a second, ${rateText(rate.updates)} updates a second` : ''
-            }. Fewer values update faster.`
-          : 'Asking the car which values it reports…'}
-      </Body>
+      <View style={styles.grid}>
+        {shown.map((p) => {
+          const s = series[p.pid];
+          const rule = rules.find((r) => r.pid === p.pid);
+          return <LiveTile key={p.pid} p={p} s={s} rule={rule} level={alertLevel(rule, s?.last, rpmNow)} settings={settings} onOpen={openTile} />;
+        })}
+      </View>
+      <Intro shown={shown.length} total={available ? available.length : null} store={rateStore} developer={!!settings.developer} />
+      {shown.length ? (
+        <Body muted small style={{ marginHorizontal: space.lg, marginBottom: space.md }}>
+          Tap a tile for alert limits and its lowest and highest.
+        </Body>
+      ) : null}
 
       <View style={{ flexDirection: 'row', gap: space.sm, marginBottom: space.lg }}>
         <Button label="Choose" icon="playlist-check" variant="secondary" compact onPress={() => setPicking(true)} style={{ flex: 1 }} disabled={!available} />
         <Button label={paused ? 'Resume' : 'Pause'} icon={paused ? 'play' : 'pause'} variant="secondary" compact onPress={() => setPaused((p) => !p)} style={{ flex: 1 }} />
         <Button label="Reset" icon="restart" variant="secondary" compact onPress={() => setSeries({})} style={{ flex: 1 }} />
       </View>
-
-      {alert ? <Notice tone="danger" icon="alert-circle-outline" text={alert} /> : null}
-      {available && available.length === 0 ? <Notice text="The car did not report any standard live values." /> : null}
-
-      <View style={{ flexDirection: 'row', gap: space.sm, marginBottom: space.lg }}>
+      {recorded?.length ? (
         <Button
-          label={recording ? 'Stop recording' : 'Record'}
-          icon={recording ? 'stop' : 'record-circle-outline'}
-          // The page's one filled button: recording is its main action.
-          variant={recording ? 'danger' : 'primary'}
+          label="Share CSV"
+          icon="share-variant"
+          variant="secondary"
           compact
-          style={{ flex: 1 }}
-          disabled={!available?.length}
+          style={{ marginBottom: space.lg }}
           onPress={() => {
-            if (recording) {
-              setRecorded(recRef.current);
-              keptRecording = recRef.current?.length ? { vin: carVin, rows: recRef.current } : null;
-              recRef.current = null;
-              setRecording(false);
-            } else {
-              keptRecording = null;
-              recRef.current = [];
-              recStart.current = Date.now();
-              setRecCount(0);
-              setRecorded(null);
-              setRecording(true);
-            }
+            // A real .csv file, shared the way the data logger shares its logs.
+            setShareError(null);
+            shareCsv(shareFileName('live data', conn.vehicle?.vin), toCsv(recorded, available ?? [], settings)).catch((e) => setShareError(`Could not share: ${e instanceof Error ? e.message : String(e)}`));
           }}
         />
-        {recorded?.length ? (
-          <Button
-            label="Share CSV"
-            icon="share-variant"
-            variant="secondary"
-            compact
-            style={{ flex: 1 }}
-            onPress={() => {
-              // A real .csv file, shared the way the data logger shares its logs.
-              setShareError(null);
-              shareCsv(shareFileName('live data', conn.vehicle?.vin), toCsv(recorded, available ?? [], settings)).catch((e) => setShareError(`Could not share: ${e instanceof Error ? e.message : String(e)}`));
-            }}
-          />
-        ) : null}
-      </View>
-      {recording ? (
-        <Body muted small style={{ marginTop: -space.sm, marginBottom: space.lg, marginHorizontal: space.lg }}>
-          Recording: {recCount.toLocaleString('en-GB')} reading{recCount === 1 ? '' : 's'} so far.
-        </Body>
       ) : null}
       {shareError ? <Notice tone="danger" icon="alert-circle-outline" text={shareError} /> : null}
       {recorded?.length ? <RecordingSummary rows={recorded} pids={available ?? []} /> : null}
 
-      <View style={styles.grid}>
-        {shown.map((p) => {
-          const s = series[p.pid];
-          const rule = rules.find((r) => r.pid === p.pid);
-          const level = alertLevel(rule, s?.last, rpmNow);
-          const f = (v: number) => toUserUnits(v, p.unit, settings).value.toFixed(p.decimals);
-          const valueText = s?.last == null ? 'No reading' : `${f(s.last)} ${toUserUnits(0, p.unit, settings).unit}`;
-          return (
-            <Pressable
-              key={p.pid}
-              accessibilityRole="button"
-              accessibilityLabel={`${p.label}, ${valueText}${level ? ', past the alert limit' : ''}. Opens alerts and lowest and highest.`}
-              onPress={() => setEditing(p)}
-              style={({ pressed }) => [
-                styles.tile,
-                { backgroundColor: level ? t.dangerSoft : pressed ? t.raised : t.surface, borderColor: level ? t.danger : t.border },
-                level ? styles.tileAlert : null,
-              ]}
-            >
-              <View style={styles.tileHead}>
-                <Text numberOfLines={1} style={[styles.tileLabel, { color: level ? t.danger : t.muted, flex: 1 }]}>
-                  {p.label}
-                </Text>
-                {rule ? <Icon name={level ? 'bell-ring' : 'bell-outline'} size={13} color={level ? t.danger : t.faint} /> : null}
-              </View>
-              {s && s.last == null ? (
-                // Read, but the car sent no value (an O2 sensor's 1.275 V means none).
-                <Text style={[styles.tileValue, styles.noReading, { color: t.muted }]}>No reading</Text>
-              ) : (
-                <Text style={[styles.tileValue, { color: level ? t.danger : t.text }]} accessibilityLabel={s?.last == null ? 'No reading' : undefined}>
-                  {s?.last == null ? '–' : f(s.last)}
-                  <Text style={[styles.unit, { color: t.muted }]}> {toUserUnits(0, p.unit, settings).unit}</Text>
-                </Text>
-              )}
-              <Spark points={s?.points ?? []} />
-              <Text style={[styles.minmax, { color: t.muted }]}>
-                {/* Lowest and highest only, on one line; the held peak is in the tile's sheet. */}
-                {s && s.points.length ? `min ${f(s.min)} · max ${f(s.max)}` : ' '}
-              </Text>
-            </Pressable>
-          );
-        })}
-      </View>
-      {shown.length ? (
-        <Body muted small style={{ marginTop: space.sm, marginHorizontal: space.lg }}>
-          Tap a tile for alert limits and its lowest and highest.
-        </Body>
-      ) : null}
+      <SensorHub active={active} />
 
       {hasTrims || hasBoost ? (
         <Group header="Views" help={SECTIONS.liveViews} style={{ marginTop: space.xl, marginBottom: 0 }}>
@@ -379,9 +351,81 @@ export function LiveScreen({ active = true }: { active?: boolean }) {
   );
 }
 
+// One line above the tiles. It reads the rate from its own store, so a
+// rate change does not redraw the grid.
+const Intro = React.memo(function Intro({ shown, total, store, developer }: { shown: number; total: number | null; store: RateStore; developer: boolean }) {
+  const rate = useSyncExternalStore(store.subscribe, store.get);
+  return (
+    <Body muted small style={styles.intro}>
+      {total != null
+        ? `Watching ${shown} of ${total}${
+            rate && developer ? `: ${rateText(rate.readings)} readings a second, ${rateText(rate.updates)} updates a second` : ''
+          }. Fewer values update faster.`
+        : 'Asking the car which values it reports…'}
+    </Body>
+  );
+});
+
+// One live value tile. It redraws only when its own series, rule or level changes.
+const LiveTile = React.memo(function LiveTile({
+  p,
+  s,
+  rule,
+  level,
+  settings,
+  onOpen,
+}: {
+  p: LivePid;
+  s: Series | undefined;
+  rule: AlertRule | undefined;
+  level: AlertLevel;
+  settings: ReturnType<typeof useSettings>['settings'];
+  onOpen: (p: LivePid) => void;
+}) {
+  const t = useTheme();
+  const f = (v: number) => toUserUnits(v, p.unit, settings).value.toFixed(p.decimals);
+  const unitLabel = toUserUnits(0, p.unit, settings).unit;
+  const valueText = s?.last == null ? 'No reading' : `${f(s.last)} ${unitLabel}`;
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={`${p.label}, ${valueText}${level ? ', past the alert limit' : ''}. Opens alerts and lowest and highest.`}
+      onPress={() => onOpen(p)}
+      style={({ pressed }) => [
+        styles.tile,
+        { backgroundColor: level ? t.dangerSoft : pressed ? t.raised : t.surface, borderColor: level ? t.danger : t.border },
+        level ? styles.tileAlert : null,
+      ]}
+    >
+      <View style={styles.tileHead}>
+        <Text style={[styles.tileLabel, { color: level ? t.danger : t.muted, flex: 1 }]}>
+          {p.label}
+        </Text>
+        {rule ? <Icon name={level ? 'bell-ring' : 'bell-outline'} size={13} color={level ? t.danger : t.faint} /> : null}
+      </View>
+      {s && s.last == null ? (
+        // Read, but the car sent no value (an O2 sensor's 1.275 V means none).
+        <Text style={[styles.tileValue, styles.noReading, { color: t.muted }]}>No reading</Text>
+      ) : (
+        <Text style={[styles.tileValue, { color: level ? t.danger : t.text }]} accessibilityLabel={s?.last == null ? 'No reading' : undefined}>
+          {s?.last == null ? '–' : f(s.last)}
+          <Text style={[styles.unit, { color: t.muted }]}> {unitLabel}</Text>
+        </Text>
+      )}
+      <Spark points={s?.points ?? NO_POINTS} />
+      <Text style={[styles.minmax, { color: t.muted }]}>
+        {/* Lowest and highest only, on one line; the held peak is in the tile's sheet. */}
+        {s && s.points.length ? `min ${f(s.min)} · max ${f(s.max)}` : ' '}
+      </Text>
+    </Pressable>
+  );
+});
+
+const NO_POINTS: number[] = [];
+
 // Top of Live data: the car's own sensors by system (as Carista groups them),
 // pinned values live, and the sensor search for cars not searched yet.
-function SensorHub({ active: shown }: { active: boolean }) {
+const SensorHub = React.memo(function SensorHub({ active: shown }: { active: boolean }) {
   const t = useTheme();
   // Stop polling while another screen is on top (it may need the adapter).
   const focused = useIsFocused();
@@ -433,17 +477,9 @@ function SensorHub({ active: shown }: { active: boolean }) {
 
   if (!v.sensorScan) {
     return (
-      <Pressable accessibilityRole="button" onPress={() => router.push('/sensors')} style={({ pressed }) => [styles.hub, { backgroundColor: t.surface, opacity: pressed ? 0.85 : 1 }]}>
-        <LinearGradient colors={[t[TOOLS.sensors.colour] + '33', t[TOOLS.sensors.colour] + '00']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={StyleSheet.absoluteFill} />
-        <View style={[styles.hubIcon, { backgroundColor: t[TOOLS.sensors.colour] }]}>
-          <Icon name={TOOLS.sensors.icon} size={22} color="#FFFFFF" />
-        </View>
-        <View style={{ flex: 1 }}>
-          <Text style={[type.heading, { color: t.text }]}>Find my car’s sensors</Text>
-          <Text style={[type.small, { color: t.muted, marginTop: 2 }]}>Gearbox oil temperature, DPF soot, oil level, crash counts and up to {all.length.toLocaleString('en-GB')} more. Takes a few minutes, once.</Text>
-        </View>
-        <Icon name="chevron-right" size={13} color={t.faint} />
-      </Pressable>
+      <Group>
+        <ListRow first {...tool('sensors')} title="Find my car’s sensors" subtitle={`Gearbox oil temperature, DPF soot, oil level, crash counts and up to ${all.length.toLocaleString('en-GB')} more. Takes a few minutes, once.`} onPress={() => router.push('/sensors')} />
+      </Group>
     );
   }
 
@@ -478,10 +514,10 @@ function SensorHub({ active: shown }: { active: boolean }) {
       </Group>
     </View>
   );
-}
+});
 
 // Maker-specific values (odometer per module, DPF, crash counters), read once.
-function MakerData() {
+const MakerData = React.memo(function MakerData() {
   const t = useTheme();
   const conn = useConnection();
   const { settings } = useSettings();
@@ -583,7 +619,7 @@ function MakerData() {
       </View>
     </View>
   );
-}
+});
 
 // Older VW modules (KWP2000 over TP2.0): measuring blocks by group number.
 // Known groups come from replica/leon-sources.md 4.3 (2.0 TFSI engine).
@@ -591,7 +627,7 @@ const PRESETS: { module: string; group: number; label: string }[] = [1, 115, 114
   .filter((g) => GROUP_NAMES['01'][g])
   .map((g) => ({ module: 'engine', group: g, label: groupName('01', g) }));
 
-function MeasuringBlocks() {
+const MeasuringBlocks = React.memo(function MeasuringBlocks() {
   const focused = useIsFocused();
   const t = useTheme();
   const conn = useConnection();
@@ -604,6 +640,7 @@ function MeasuringBlocks() {
   const [live, setLive] = useState(false);
   const [found, setFound] = useState<{ group: number; cells: MeasuringCell[] }[]>([]);
   const [pct, setPct] = useState(0);
+  const [readError, setReadError] = useState<string | null>(null);
   const ownNames = useValueNames(conn.vehicle?.vin);
   // The Name form that is open: the field (0 based) and the module, group and
   // field it was opened for. Save uses this, never the current selection.
@@ -631,15 +668,23 @@ function MeasuringBlocks() {
     setModules(list);
     setModule(list.find((m) => m.id === 'engine') ?? list[0]);
   }, [saved, client, modules]);
+  // Another screen opened on top (Boost reads the same engine): stop watching,
+  // or that screen would wait behind this one.
+  useEffect(() => {
+    if (!focused && liveRef.current) liveRef.current = false;
+  }, [focused]);
   if (conn.vehicle?.group !== 'vag' || !client?.supportsModules) return null;
   const savedGroups = module && saved?.[module.id] ? Object.entries(saved[module.id]).map(([g, units]) => ({ group: Number(g), units })) : [];
 
   const find = async () => {
     setBusy('find');
+    setReadError(null);
     try {
       const list = await client.findTp20Modules();
       setModules(list);
       setModule(list.find((m) => m.id === 'engine') ?? list[0] ?? null);
+    } catch (e) {
+      setReadError(`Could not read: ${e instanceof Error ? e.message : String(e)}. Check the ignition is on.`);
     } finally {
       setBusy(null);
     }
@@ -648,17 +693,15 @@ function MeasuringBlocks() {
     if (!m) return;
     setGroup(g);
     setBusy('read');
+    setReadError(null);
     try {
       setCells(await client.readMeasuringBlock(m, g));
+    } catch (e) {
+      setReadError(`Could not read: ${e instanceof Error ? e.message : String(e)}. Check the ignition is on.`);
     } finally {
       setBusy(null);
     }
   };
-  // Another screen opened on top (Boost reads the same engine): stop watching,
-  // or that screen would wait behind this one.
-  useEffect(() => {
-    if (!focused && liveRef.current) liveRef.current = false;
-  }, [focused]);
   const toggleLive = async () => {
     if (!module) return;
     if (liveRef.current) {
@@ -668,16 +711,25 @@ function MeasuringBlocks() {
     }
     liveRef.current = true;
     setLive(true);
-    await client.watchMeasuringBlock(module, group, setCells, () => liveRef.current);
-    liveRef.current = false;
-    setLive(false);
+    setReadError(null);
+    try {
+      await client.watchMeasuringBlock(module, group, setCells, () => liveRef.current);
+    } catch (e) {
+      setReadError(`Could not read: ${e instanceof Error ? e.message : String(e)}. Check the ignition is on.`);
+    } finally {
+      liveRef.current = false;
+      setLive(false);
+    }
   };
   const scanAll = async () => {
     if (!module) return;
     setBusy('scan');
     setFound([]);
+    setReadError(null);
     try {
       await client.scanMeasuringBlocks(module, (g, c) => setFound((old) => [...old, { group: g, cells: c }].sort((x, y) => x.group - y.group)), setPct);
+    } catch (e) {
+      setReadError(`Could not read: ${e instanceof Error ? e.message : String(e)}. Check the ignition is on.`);
     } finally {
       setBusy(null);
     }
@@ -692,6 +744,7 @@ function MeasuringBlocks() {
           Older VW modules give live values in numbered value groups. Units come from each value itself; values with an unknown
           formula are shown raw. Learn my car finds these modules and their groups for you.
         </Body>
+        {readError ? <Notice tone="danger" icon="alert-circle-outline" text={readError} /> : null}
         {!modules ? (
           <>
             <Button label={busy === 'find' ? 'Looking…' : 'Look for older VW modules'} icon="database-search-outline" variant="secondary" busy={busy === 'find'} onPress={find} />
@@ -713,10 +766,8 @@ function MeasuringBlocks() {
                 ))}
               </View>
             ) : null}
-            <View style={styles.stepper}>
-              <Button label="−" variant="secondary" onPress={() => read(Math.max(1, group - 1))} disabled={!!busy || live} />
-              <Text style={[type.title3, type.number, { color: t.text, minWidth: 90, textAlign: 'center' }]}>Group {group}</Text>
-              <Button label="+" variant="secondary" onPress={() => read(Math.min(255, group + 1))} disabled={!!busy || live} />
+            <View style={[styles.stepper, { justifyContent: 'center' }]}>
+              <Stepper label="Group" value={`Group ${group}`} width={96} disabled={!!busy || live} noLower={group <= 1} noHigher={group >= 255} onStep={(d) => read(Math.min(255, Math.max(1, group + d)))} />
             </View>
             <View style={{ gap: space.sm }}>
               <Button label={live ? 'Stop' : 'Live'} icon={live ? 'stop' : 'chart-timeline-variant'} variant={live ? 'secondary' : 'primary'} onPress={toggleLive} disabled={!!busy} />
@@ -731,7 +782,7 @@ function MeasuringBlocks() {
                   return (
                     <View key={i}>
                       <View style={[styles.makerRow, { borderColor: t.border }]}>
-                        <Pressable accessibilityRole="button" accessibilityLabel={`${own ? 'Rename' : 'Name'} field ${i + 1}`} onPress={() => setNaming(naming?.index === i ? null : module ? { index: i, target: { moduleId: module.id, moduleCode: module.code, group, field: i + 1, unit: c.unit, changed: fmt(c) }, existing: own } : null)} style={{ flex: 1 }}>
+                        <Pressable accessibilityRole="button" accessibilityLabel={`${own ? own.name : (groupLabels(module?.code, group)?.[i] ?? `Field ${i + 1}`)}: ${fmt(c)}. ${own ? 'Rename' : 'Name'} this value`} onPress={() => setNaming(naming?.index === i ? null : module ? { index: i, target: { moduleId: module.id, moduleCode: module.code, group, field: i + 1, unit: c.unit, changed: fmt(c) }, existing: own } : null)} style={{ flex: 1, minHeight: 44, justifyContent: 'center' }}>
                           <NamedText own={own} builtIn={groupLabels(module?.code, group)?.[i]} fallback={`Field ${i + 1}`} style={styles.makerLabel} />
                           <Text style={[type.caption, { color: t.accentText }]}>{own ? 'Rename' : 'Name'}</Text>
                         </Pressable>
@@ -776,39 +827,21 @@ function MeasuringBlocks() {
       </View>
     </View>
   );
-}
+});
 
-// One row per reading time, one column per value, in the owner's units.
-function toCsv(rows: { t: number; pid: number; v: number }[], pids: LivePid[], s: Parameters<typeof toUserUnits>[2]): string {
-  const used = [...new Set(rows.map((r) => r.pid))];
-  const label = (pid: number) => {
-    const p = pids.find((x) => x.pid === pid);
-    return p ? `${p.label} (${toUserUnits(0, p.unit, s).unit})` : `PID ${pid}`;
-  };
-  const lines = [['Time (s)', ...used.map(label)].join(',')];
-  const last: Record<number, string> = {};
-  for (const r of rows) {
-    const p = pids.find((x) => x.pid === r.pid);
-    last[r.pid] = p ? toUserUnits(r.v, p.unit, s).value.toFixed(p.decimals) : String(r.v);
-    lines.push([(r.t / 1000).toFixed(2), ...used.map((u) => last[u] ?? '')].join(','));
-  }
-  return lines.join('\n');
-}
-
-function RecordingSummary({ rows, pids }: { rows: { t: number; pid: number; v: number }[]; pids: LivePid[] }) {
+function RecordingSummary({ rows, pids }: { rows: Reading[]; pids: LivePid[] }) {
   const { settings } = useSettings();
-  const used = [...new Set(rows.map((r) => r.pid))];
+  // Worked out once per recording, not on every poll pass after Stop.
+  const stats = useMemo(() => summarise(rows), [rows]);
   const secs = (rows[rows.length - 1]?.t ?? 0) / 1000;
   return (
     <Group header={`Recording, ${secs.toFixed(0)} s, ${rows.length.toLocaleString('en-GB')} reading${rows.length === 1 ? '' : 's'}`} help={SECTIONS.liveRecording} footer="Share CSV opens in Numbers or Excel. The recording is kept until you record again or close Pin16. For recordings saved on the phone with charts, use the Data logger.">
-      {used.map((pid, i) => {
-        const p = pids.find((x) => x.pid === pid);
-        const vals = rows.filter((r) => r.pid === pid).map((r) => r.v);
-        if (!p || !vals.length) return null;
+      {stats.map((st, i) => {
+        const p = pids.find((x) => x.pid === st.pid);
+        if (!p) return null;
         const f = (v: number) => toUserUnits(v, p.unit, settings).value.toFixed(p.decimals);
-        const avg = vals.reduce((a, b) => a + b, 0) / vals.length;
         return (
-          <ListRow key={pid} first={i === 0} title={p.label} value={`${f(Math.min(...vals))} to ${f(Math.max(...vals))}, average ${f(avg)} ${toUserUnits(0, p.unit, settings).unit}`} noChevron />
+          <ListRow key={st.pid} first={i === 0} title={p.label} value={`${f(st.min)} to ${f(st.max)}, average ${f(st.avg)} ${toUserUnits(0, p.unit, settings).unit}`} noChevron />
         );
       })}
     </Group>
@@ -822,29 +855,34 @@ function push(old: Series | undefined, v: number | null, now = Date.now()): Seri
   return { last: v, min: Math.min(old?.min ?? Infinity, v), max: Math.max(old?.max ?? -Infinity, v), points, peak: holdPeak(old?.peak, v, now) };
 }
 
-// Trend of the last samples, drawn as thin bars so no chart library is needed.
-function Spark({ points }: { points: number[] }) {
+const SPARK_W = HISTORY * 4;
+const SPARK_H = 28;
+
+// Trend of the last samples, drawn as one polyline. It redraws only when the points change.
+const Spark = React.memo(function Spark({ points }: { points: number[] }) {
   const t = useTheme();
-  const lo = Math.min(...points);
-  const hi = Math.max(...points);
+  let lo = Infinity;
+  let hi = -Infinity;
+  for (const v of points) {
+    if (v < lo) lo = v;
+    if (v > hi) hi = v;
+  }
   const span = hi - lo || 1;
+  const xy = points.map((v, i) => [i * 4 + 1.5, SPARK_H - 2 - ((v - lo) / span) * (SPARK_H - 4)] as const);
+  const all = xy.map(([x, y]) => `${x},${y.toFixed(1)}`).join(' ');
+  // The newest sample is drawn in a stronger colour, as the bars did.
+  const tail = xy.length > 1 ? xy.slice(-2) : xy.length ? [[xy[0][0] - 1.5, xy[0][1]] as const, [xy[0][0] + 1.5, xy[0][1]] as const] : [];
   return (
     <View style={styles.spark} accessible={false}>
-      {points.map((v, i) => (
-        <View
-          key={i}
-          style={{
-            width: 3,
-            marginRight: 1,
-            height: `${10 + ((v - lo) / span) * 90}%`,
-            backgroundColor: i === points.length - 1 ? t.muted : t.border,
-            borderRadius: 1,
-          }}
-        />
-      ))}
+      {points.length ? (
+        <Svg width="100%" height={SPARK_H} viewBox={`0 0 ${SPARK_W} ${SPARK_H}`} preserveAspectRatio="none">
+          {points.length > 1 ? <Polyline points={all} fill="none" stroke={t.border} strokeWidth={2} strokeLinejoin="round" /> : null}
+          <Polyline points={tail.map(([x, y]) => `${x},${y.toFixed(1)}`).join(' ')} fill="none" stroke={t.muted} strokeWidth={2} strokeLinecap="round" />
+        </Svg>
+      ) : null}
     </View>
   );
-}
+});
 
 function Picker({
   visible,
@@ -881,7 +919,6 @@ function Picker({
   }, [visible]);
 
   const toggle = (pid: number) => setDraft((d) => (d.includes(pid) ? d.filter((x) => x !== pid) : [...d, pid]));
-  const ios = Platform.OS === 'ios';
   const matches = filterPids(available, query);
   const changeSets = (next: ValueSet[]) => {
     setMySets(next);
@@ -892,154 +929,118 @@ function Picker({
   // A native page sheet on iPhone: Cancel and Done in the bar, inset grouped
   // rows with a trailing checkmark in the tint.
   return (
-    <Modal
-      visible={visible}
-      animationType="slide"
-      presentationStyle={ios ? 'pageSheet' : undefined}
-      transparent={!ios}
-      onRequestClose={() => onClose(selected)}
-    >
-      <View style={[styles.sheetPage, { backgroundColor: t.bg }, !ios && styles.sheetWeb]}>
-        <View style={[styles.sheetBar, { borderColor: t.border }]}>
-          <Pressable accessibilityRole="button" hitSlop={10} onPress={() => onClose(selected)} style={styles.barButton}>
-            <Text style={[styles.barText, { color: t.accentText }]}>Cancel</Text>
-          </Pressable>
-          <Text style={[styles.barTitle, { color: t.text }]}>Choose values</Text>
-          <Pressable accessibilityRole="button" hitSlop={10} onPress={() => onClose(draft)} style={[styles.barButton, { alignItems: 'flex-end' }]}>
-            <Text style={[styles.barText, { color: t.accentText, fontWeight: '600' }]}>Done</Text>
-          </Pressable>
+    <SheetPage visible={visible} title="Choose values" onCancel={() => onClose(selected)} onDone={() => onClose(draft)}>
+      <ScrollView contentContainerStyle={{ padding: space.lg, paddingBottom: 60 }} keyboardShouldPersistTaps="handled" keyboardDismissMode="interactive" automaticallyAdjustKeyboardInsets>
+        <View style={{ marginBottom: space.md }}>
+          <SearchField value={query} onChange={setQuery} placeholder="Search values, for example trim or temp" caps={false} />
         </View>
-        <ScrollView contentContainerStyle={{ padding: space.lg, paddingBottom: 60 }} keyboardShouldPersistTaps="handled">
-          <View style={{ marginBottom: space.md }}>
-            <SearchField value={query} onChange={setQuery} placeholder="Search values, for example trim or temp" caps={false} />
-          </View>
-          <Text style={[styles.sheetNote, { color: t.muted }]}>
-            Watching {draft.length} of {available.length}. Fewer values update faster.
-          </Text>
+        <Text style={[styles.sheetNote, { color: t.muted }]}>
+          Watching {draft.length} of {available.length}. Fewer values update faster.
+        </Text>
 
-          {!query.trim() ? (
-            <Group header="Saved sets" help={SECTIONS.liveSets} footer={mySets.length ? 'Tap a set to load it. Values this car does not report are left out.' : undefined}>
-              {mySets.map((s, i) => (
-                <ListRow
-                  key={s.name}
-                  first={i === 0}
-                  title={s.name}
-                  value={`${s.pids.length} value${s.pids.length === 1 ? '' : 's'}`}
-                  noChevron
-                  onPress={() => setDraft(loadSet(s, ids))}
-                  right={
-                    <Pressable
-                      accessibilityRole="button"
-                      accessibilityLabel={`Delete the set ${s.name}`}
-                      hitSlop={10}
-                      onPress={() => setRemoving(s)}
-                      style={styles.trash}
-                    >
-                      <Icon name="trash-can-outline" size={18} color={t.danger} />
-                    </Pressable>
-                  }
-                />
-              ))}
-              <View style={[styles.saveRow, { borderColor: t.border, borderTopWidth: mySets.length ? StyleSheet.hairlineWidth : 0 }]}>
-                <Field value={name} onChange={setName} placeholder="Name for these values" returnKey="done" style={{ flex: 1 }} />
-                <Button
-                  label="Save set"
-                  compact
-                  variant="secondary"
-                  disabled={!name.trim() || !draft.length}
-                  onPress={() => {
-                    changeSets(saveSet(mySets, name, draft));
-                    setName('');
-                  }}
-                />
-              </View>
+        {!query.trim() ? (
+          <Group header="Saved sets" help={SECTIONS.liveSets} footer={mySets.length ? 'Tap a set to load it. Values this car does not report are left out.' : undefined}>
+            {mySets.map((s, i) => (
+              <ListRow
+                key={s.name}
+                first={i === 0}
+                title={s.name}
+                value={`${s.pids.length} value${s.pids.length === 1 ? '' : 's'}`}
+                noChevron
+                control
+                onPress={() => setDraft(loadSet(s, ids))}
+                right={
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel={`Delete the set ${s.name}`}
+                    hitSlop={10}
+                    onPress={() => setRemoving(s)}
+                    style={styles.trash}
+                  >
+                    <Icon name="trash-can-outline" size={18} color={t.danger} />
+                  </Pressable>
+                }
+              />
+            ))}
+            <View style={[styles.saveRow, { borderColor: t.border, borderTopWidth: mySets.length ? StyleSheet.hairlineWidth : 0 }]}>
+              <Field value={name} onChange={setName} placeholder="Name for these values" returnKey="done" style={{ flex: 1 }} />
+              <Button
+                label="Save set"
+                compact
+                variant="secondary"
+                disabled={!name.trim() || !draft.length}
+                onPress={() => {
+                  changeSets(saveSet(mySets, name, draft));
+                  setName('');
+                }}
+              />
+            </View>
+          </Group>
+        ) : null}
+
+        {query.trim() && !matches.length ? <Notice text="No value matches. Try another word, for example speed, fuel or temp." /> : null}
+        {PID_GROUPS.map((g) => {
+          const items = matches.filter((p) => p.group === g);
+          if (!items.length) return null;
+          return (
+            <Group key={g} header={g}>
+              {items.map((p, i) => {
+                const on = draft.includes(p.pid);
+                return (
+                  <ListRow
+                    key={p.pid}
+                    first={i === 0}
+                    title={p.label}
+                    value={toUserUnits(0, p.unit, settings).unit}
+                    onPress={() => toggle(p.pid)}
+                    noChevron
+                    selected={on}
+                  />
+                );
+              })}
             </Group>
-          ) : null}
-
-          {query.trim() && !matches.length ? <Notice text="No value matches. Try another word, for example speed, fuel or temp." /> : null}
-          {PID_GROUPS.map((g) => {
-            const items = matches.filter((p) => p.group === g);
-            if (!items.length) return null;
-            return (
-              <Group key={g} header={g}>
-                {items.map((p, i) => {
-                  const on = draft.includes(p.pid);
-                  return (
-                    <ListRow
-                      key={p.pid}
-                      first={i === 0}
-                      title={p.label}
-                      value={toUserUnits(0, p.unit, settings).unit}
-                      onPress={() => toggle(p.pid)}
-                      noChevron
-                      selected={on}
-                    />
-                  );
-                })}
-              </Group>
-            );
-          })}
-          <Button label="Clear selection" variant="ghost" onPress={() => setDraft([])} />
-        </ScrollView>
-        <ConfirmSheet
-          visible={!!removing}
-          title="Delete this set?"
-          lines={removing ? [`${removing.name}, ${removing.pids.length} value${removing.pids.length === 1 ? '' : 's'}. This cannot be undone.`] : []}
-          confirmLabel="Delete"
-          onConfirm={() => {
-            const s = removing;
-            setRemoving(null);
-            if (s) changeSets(removeSet(mySets, s.name));
-          }}
-          onCancel={() => setRemoving(null)}
-        />
-      </View>
-    </Modal>
+          );
+        })}
+        <Button label="Clear selection" variant="ghost" onPress={() => setDraft([])} />
+      </ScrollView>
+      <ConfirmSheet
+        visible={!!removing}
+        title="Delete this set?"
+        lines={removing ? [`${removing.name}, ${removing.pids.length} value${removing.pids.length === 1 ? '' : 's'}. This cannot be undone.`] : []}
+        confirmLabel="Delete"
+        onConfirm={() => {
+          const s = removing;
+          setRemoving(null);
+          if (s) changeSets(removeSet(mySets, s.name));
+        }}
+        onCancel={() => setRemoving(null)}
+      />
+    </SheetPage>
   );
 }
 
 const styles = StyleSheet.create({
-  hub: { flexDirection: 'row', alignItems: 'center', gap: space.md, borderRadius: radius.lg, padding: space.lg, marginBottom: space.xl, overflow: 'hidden' },
-  hubIcon: { width: 44, height: 44, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
+  headerRight: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
   intro: { marginHorizontal: space.lg, marginBottom: space.md },
   chips: { flexDirection: 'row', flexWrap: 'wrap', gap: space.sm, marginBottom: space.md },
   stepper: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: space.sm, marginBottom: space.md },
   grid: { flexDirection: 'row', flexWrap: 'wrap', gap: space.md },
   tile: { flexGrow: 1, flexBasis: '45%', borderRadius: radius.lg, padding: space.md },
-  tileLabel: { fontSize: 13, fontWeight: '600', marginBottom: space.xs },
+  tileLabel: { ...type.small, fontWeight: '600', marginBottom: space.xs },
   tileHead: { flexDirection: 'row', alignItems: 'center', gap: space.xs },
   tileAlert: { borderWidth: 2, padding: space.md - 2 },
   saveRow: { flexDirection: 'row', alignItems: 'center', gap: space.sm, paddingHorizontal: space.lg, paddingVertical: space.md },
   trash: { paddingHorizontal: space.md, minHeight: 44, justifyContent: 'center' },
-  tileValue: { fontSize: 26, fontWeight: '700', letterSpacing: -0.5, fontVariant: ['tabular-nums'] },
-  unit: { fontSize: 14, fontWeight: '500' },
-  noReading: { fontSize: 17, lineHeight: 31 },
+  tileValue: { ...type.tile, fontVariant: ['tabular-nums'] },
+  unit: { ...type.sub, fontWeight: '500' },
+  noReading: { ...type.body, lineHeight: type.tile.lineHeight },
   spark: { height: 28, flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'flex-start', marginTop: space.sm },
-  minmax: { fontSize: 12, marginTop: space.xs, fontVariant: ['tabular-nums'] },
-  scrim: { flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', justifyContent: 'flex-end' },
-  sheetPage: { flex: 1 },
-  sheetWeb: { marginTop: 60, borderTopLeftRadius: 14, borderTopRightRadius: 14, overflow: 'hidden' },
-  sheetBar: { flexDirection: 'row', alignItems: 'center', minHeight: 56, paddingHorizontal: space.lg, borderBottomWidth: StyleSheet.hairlineWidth },
-  barButton: { width: 80, minHeight: 44, justifyContent: 'center' },
-  barText: { fontSize: 17, letterSpacing: -0.41 },
-  barTitle: { flex: 1, textAlign: 'center', fontSize: 17, fontWeight: '600', letterSpacing: -0.41 },
-  sheetNote: { fontSize: 13, lineHeight: 18, marginBottom: space.lg, marginLeft: space.lg },
-  sheet: {
-    maxHeight: '85%',
-    borderTopLeftRadius: radius.lg,
-    borderTopRightRadius: radius.lg,
-    borderWidth: StyleSheet.hairlineWidth,
-    padding: space.xl,
-    width: '100%',
-    maxWidth: 560,
-    alignSelf: 'center',
-  },
-  option: { flexDirection: 'row', alignItems: 'center', gap: space.md, paddingVertical: space.md, borderTopWidth: StyleSheet.hairlineWidth },
-  box: { width: 22, height: 22, borderRadius: 6, borderWidth: 2, alignItems: 'center', justifyContent: 'center' },
+  minmax: { ...type.caption, marginTop: space.xs, fontVariant: ['tabular-nums'] },
+  sheetNote: { ...type.small, marginBottom: space.lg, marginLeft: space.lg },
   maker: { borderRadius: radius.lg, padding: space.lg },
-  makerHead: { fontSize: 15, fontWeight: '700', marginBottom: space.xs },
+  makerHead: { ...type.sub, fontWeight: '700', marginBottom: space.xs },
   makerRow: { flexDirection: 'row', alignItems: 'center', gap: space.md, paddingVertical: 10, borderTopWidth: StyleSheet.hairlineWidth },
-  makerLabel: { fontSize: 15 },
-  makerSource: { fontSize: 12, marginTop: 2 },
-  makerValue: { fontSize: 15, fontWeight: '700', fontVariant: ['tabular-nums'], textAlign: 'right' },
+  makerLabel: { ...type.sub },
+  makerSource: { ...type.caption, marginTop: 2 },
+  makerValue: { ...type.sub, fontWeight: '700', fontVariant: ['tabular-nums'], textAlign: 'right' },
 });

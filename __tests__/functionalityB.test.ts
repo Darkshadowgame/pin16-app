@@ -232,15 +232,15 @@ describe('finding 18: the knock monitor counts real answers and keeps the last s
 });
 
 describe('finding 22: the Diary groups cars by VIN', () => {
-  const names: Record<string, string> = { V1: 'Phil’s Cupra', V2: 'Leon', V3: 'Leon' };
+  const names: Record<string, string> = { V1: 'Test Cupra', V2: 'Leon', V3: 'Leon' };
   const nameOf = (vin: string) => names[vin] ?? null;
   it('keeps a renamed car’s entries together under its name now', () => {
     const entries = [
       { vin: 'V1', vehicleName: 'SEAT Leon 2007' },
-      { vin: 'V1', vehicleName: 'Phil’s Cupra' },
+      { vin: 'V1', vehicleName: 'Test Cupra' },
     ];
-    expect(diaryCars(entries, nameOf)).toEqual([{ key: 'vin:V1', label: 'Phil’s Cupra' }]);
-    expect(entryCarName(entries[0], nameOf)).toBe('Phil’s Cupra');
+    expect(diaryCars(entries, nameOf)).toEqual([{ key: 'vin:V1', label: 'Test Cupra' }]);
+    expect(entryCarName(entries[0], nameOf)).toBe('Test Cupra');
     expect(entryCarKey(entries[0])).toBe(entryCarKey(entries[1]));
   });
   it('keeps 2 cars with one name apart', () => {

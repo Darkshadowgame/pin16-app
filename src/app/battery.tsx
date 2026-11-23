@@ -1,3 +1,4 @@
+import { sleep } from '../async';
 import React, { useEffect, useRef, useState } from 'react';
 import { Text, View } from 'react-native';
 import { ElmClient } from '../obd/elm';
@@ -32,7 +33,6 @@ interface Crank {
 // A read that failed, in plain words.
 const failedRead = (e: unknown) => `The reading failed: ${e instanceof Error ? e.message : String(e)} Check the adapter is still connected, then try again.`;
 
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 // Average of a few readings, so one noisy value does not decide the result.
 async function steadyVolts(client: ElmClient, alive: () => boolean, n = 5): Promise<number | null> {

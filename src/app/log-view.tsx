@@ -1,19 +1,50 @@
 // Log viewer: one chart per value or all on one chart, a cursor that shows
 // every value at a moment, lowest, highest and average, markers, and CSV share.
 import { router, Stack, useLocalSearchParams } from 'expo-router';
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { SECTIONS } from '../help';
-import { toUserUnits, useSettings } from '../settings';
+import { Settings, toUserUnits, useSettings } from '../settings';
 import { space, type, useTheme } from '../theme';
 import { Body, Button, Card, ConfirmSheet, GuideButton, Group, ListRow, Notice, Screen, Segmented } from '../ui';
 import { chartColours, ChartLine, LogChart, RouteView } from '../logger/Charts';
 import { routeIndexAt, routeKm, routeOf, toGpx } from '../logger/gps';
-import { DataLog, formatDuration, formatWhen, LogChannel, logRate, seriesOf, statsOf, toCsv, valueAt } from '../logger/format';
+import { DataLog, formatDuration, formatWhen, LogChannel, logRate, Series, seriesOf, statsOf, toCsv, valueAt } from '../logger/format';
 import { deleteLog, loadLog, shareCsv, shareGpx } from '../logger/store';
 import { shareFileName } from '../timeText';
 
 type View_ = 'each' | 'all';
+
+const fmtValue = (c: LogChannel, v: number | null, settings: Settings) => {
+  if (v == null) return '–';
+  const u = toUserUnits(v, c.unit, settings);
+  return `${u.value.toFixed(c.decimals)}${u.unit ? ` ${u.unit}` : ''}`;
+};
+
+interface Row {
+  c: LogChannel;
+  series: Series;
+  stats: ReturnType<typeof statsOf>;
+  colour: string;
+  line: ChartLine[];
+}
+
+// The values at the cursor. Redrawn when the cursor moves, not on other page changes.
+const Readouts = React.memo(function Readouts({ data, cursor, near, settings }: { data: Row[]; cursor: number | null; near: number | undefined; settings: Settings }) {
+  return (
+    <Group header={cursor == null ? 'Drag across a chart to read values' : `At ${(cursor / 1000).toFixed(2)} s${near ? `, marker ${near}` : ''}`} help={SECTIONS.logViewer}>
+      {data.map((d, i) => (
+        <ListRow
+          key={d.c.key}
+          first={i === 0}
+          leading={<View style={[styles.dot, { backgroundColor: d.colour }]} />}
+          title={d.c.label}
+          value={cursor == null ? (d.stats ? fmtValue(d.c, d.series.v[d.series.v.length - 1], settings) : 'No reading') : fmtValue(d.c, valueAt(d.series, cursor), settings)}
+        />
+      ))}
+    </Group>
+  );
+});
 
 const chartRange = (lo: number, hi: number) => (lo === hi ? { lo: lo - 1, hi: hi + 1 } : { lo, hi });
 
@@ -26,6 +57,25 @@ export default function LogView() {
   const [view, setView] = useState<View_>('each');
   const [confirm, setConfirm] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Scrubbing: at most one cursor update per animation frame.
+  const pendingCursor = useRef<number | null>(null);
+  const frame = useRef<number | null>(null);
+  const scrub = useCallback((ms: number) => {
+    pendingCursor.current = ms;
+    if (frame.current != null) return;
+    frame.current = requestAnimationFrame(() => {
+      frame.current = null;
+      const next = pendingCursor.current;
+      pendingCursor.current = null;
+      if (next != null) setCursor(next);
+    });
+  }, []);
+  useEffect(
+    () => () => {
+      if (frame.current != null) cancelAnimationFrame(frame.current);
+    },
+    [],
+  );
 
   useEffect(() => {
     if (!vin || !id) {
@@ -69,11 +119,7 @@ export default function LogView() {
     );
   }
 
-  const fmt = (c: LogChannel, v: number | null) => {
-    if (v == null) return '–';
-    const u = toUserUnits(v, c.unit, settings);
-    return `${u.value.toFixed(c.decimals)}${u.unit ? ` ${u.unit}` : ''}`;
-  };
+  const fmt = (c: LogChannel, v: number | null) => fmtValue(c, v, settings);
   const rate = logRate(log);
   const km = route.length > 1 ? routeKm(route) : 0;
   const dist = toUserUnits(km, 'km', settings);
@@ -136,17 +182,7 @@ export default function LogView() {
         style={{ marginBottom: space.lg }}
       />
 
-      <Group header={cursor == null ? 'Drag across a chart to read values' : `At ${(cursor / 1000).toFixed(2)} s${near ? `, marker ${near.n}` : ''}`} help={SECTIONS.logViewer}>
-        {data.map((d, i) => (
-          <ListRow
-            key={d.c.key}
-            first={i === 0}
-            leading={<View style={[styles.dot, { backgroundColor: d.colour }]} />}
-            title={d.c.label}
-            value={cursor == null ? (d.stats ? fmt(d.c, d.series.v[d.series.v.length - 1]) : 'No reading') : fmt(d.c, valueAt(d.series, cursor))}
-          />
-        ))}
-      </Group>
+      <Readouts data={data} cursor={cursor} near={near?.n} settings={settings} />
 
       {view === 'all' ? (
         <View style={{ marginBottom: space.xl }}>
@@ -156,7 +192,7 @@ export default function LogView() {
             height={220}
             markers={log.markers}
             cursor={cursor}
-            onScrub={setCursor}
+            onScrub={scrub}
             accessibilityLabel={`Chart of ${combined.length} values together`}
           />
           <TimeAxis ms={log.durationMs} />
@@ -177,7 +213,7 @@ export default function LogView() {
                 durationMs={log.durationMs}
                 markers={log.markers}
                 cursor={cursor}
-                onScrub={setCursor}
+                onScrub={scrub}
                 topLabel={fmt(d.c, d.stats.max)}
                 bottomLabel={fmt(d.c, d.stats.min)}
                 accessibilityLabel={`${d.c.label} chart, from ${fmt(d.c, d.stats.min)} to ${fmt(d.c, d.stats.max)}`}
@@ -204,7 +240,7 @@ export default function LogView() {
             route={route}
             markers={log.markers}
             cursor={cursor}
-            onScrub={setCursor}
+            onScrub={scrub}
             accessibilityLabel={route.length > 1 ? `Route of this log, ${dist.value.toFixed(1)} ${dist.unit}` : 'Route of this log'}
           />
           <Text style={[type.caption, { color: t.muted, marginTop: space.xs }]}>Green dot: start. Square: end. North is up.</Text>

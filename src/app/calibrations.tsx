@@ -68,6 +68,8 @@ export default function Calibrations() {
     let text: string;
     let end: Awaited<ReturnType<typeof client.runBasicSetting>> = null;
     try {
+      const wrong = await conn.verifyCar();
+      if (wrong) throw new Error(wrong);
       end = def
         ? await client.runBasicSetting(def, c.group, {
             onUpdate: (value) => {

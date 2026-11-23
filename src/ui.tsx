@@ -15,6 +15,7 @@ import {
   Pressable,
   ScrollView,
   StyleSheet,
+  Switch,
   Text,
   TextInput,
   TextStyle,
@@ -178,8 +179,28 @@ export function tap() {
   if (Platform.OS !== 'web') Haptics.selectionAsync().catch(() => undefined);
 }
 
+// A commit (Save, Run, Start): one light tap. Steps through values use tap().
+export function commit() {
+  if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => undefined);
+}
+
 export function success() {
   if (Platform.OS !== 'web') Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => undefined);
+}
+
+// Says a result or an error aloud to VoiceOver and TalkBack without moving
+// focus: Notice, a switch that has written to the car, a cleared fault.
+export function announce(text: string) {
+  if (Platform.OS === 'web' || !text) return;
+  AccessibilityInfo.announceForAccessibility(text);
+}
+
+// A result is spoken by a live region on Android and by announce on iOS: one
+// or the other, so it is never said twice.
+export const liveRegion: 'polite' | undefined = Platform.OS === 'android' ? 'polite' : undefined;
+export function announceResult(text: string) {
+  if (Platform.OS === 'android') return;
+  announce(text);
 }
 
 export function useReduceMotion(): boolean {
@@ -194,8 +215,9 @@ export function useReduceMotion(): boolean {
 
 // The web preview draws the tab bar across the top; leave room for it.
 const WEB_TAB_BAR = Platform.OS === 'web' ? 56 : 0;
-// The phone's floating tab bar sits over the end of every tab page: about
-// 70 pt above the home indicator. The last row must scroll clear of it.
+// The phone's floating tab bar sits over the end of every tab page (the tab
+// roots, which pass a title): about 70 pt above the home indicator. The last
+// row must scroll clear of it. Pushed pages have no tab bar.
 const TAB_BAR_CLEARANCE = 100;
 
 // Scrolling page. Tab roots pass a large title, drawn in the content the way
@@ -235,8 +257,10 @@ export function Screen({
   return (
     <ScrollView
       style={{ flex: 1, backgroundColor: t.bg }}
-      contentContainerStyle={[padded && { paddingHorizontal: space.lg, paddingTop: inPage ? insets.top + space.sm + WEB_TAB_BAR : title ? space.sm : space.lg, paddingBottom: Math.max(120, insets.bottom + TAB_BAR_CLEARANCE) }]}
+      contentContainerStyle={[padded && { paddingHorizontal: space.lg, paddingTop: inPage ? insets.top + space.sm + WEB_TAB_BAR : title ? space.sm : space.lg, paddingBottom: title ? Math.max(120, insets.bottom + TAB_BAR_CLEARANCE) : insets.bottom + space.xl }]}
       keyboardShouldPersistTaps="handled"
+      keyboardDismissMode="interactive"
+      automaticallyAdjustKeyboardInsets
       contentInsetAdjustmentBehavior="automatic"
     >
       {title && !inPage ? <Stack.Screen options={{ title, ...(title === 'Pin16' ? { headerTitle: () => <Wordmark size={17} /> } : null), headerRight: right ? () => right : undefined }} /> : null}
@@ -269,10 +293,7 @@ export function HeaderButton({ icon, label, onPress, filled }: { icon: IconName;
       accessibilityRole="button"
       accessibilityLabel={label}
       hitSlop={10}
-      onPress={() => {
-        tap();
-        onPress();
-      }}
+      onPress={onPress}
       style={({ pressed }) => [
         styles.headerButton,
         web && { backgroundColor: filled ? t.accent : t.surface },
@@ -344,10 +365,17 @@ export function Group({
 // of chips or a grid of tiles. Never inside the card.
 export function Label({ children, style, help }: { children: React.ReactNode; style?: TextStyle; help?: Help }) {
   const t = useTheme();
-  if (!help) return <Text style={[type.label, styles.label, { color: t.muted }, style]}>{children}</Text>;
+  if (!help)
+    return (
+      <Text accessibilityRole="header" style={[type.label, styles.label, { color: t.muted }, style]}>
+        {children}
+      </Text>
+    );
   return (
     <View style={[styles.labelRow, style?.marginTop != null && { marginTop: style.marginTop }]}>
-      <Text style={[type.label, { color: t.muted, flex: 1 }]}>{children}</Text>
+      <Text accessibilityRole="header" style={[type.label, { color: t.muted, flex: 1 }]}>
+        {children}
+      </Text>
       <HelpButton help={help} />
     </View>
   );
@@ -415,7 +443,7 @@ export function HelpSheet({ help, visible, onClose }: { help: Help; visible: boo
               <Text style={[type.body, { color: t.accentText, fontWeight: '600' }]}>Done</Text>
             </Pressable>
           </View>
-          <ScrollView contentContainerStyle={{ padding: space.lg, paddingBottom: insets.bottom + space.xxl }}>
+          <ScrollView contentContainerStyle={{ padding: space.lg, paddingBottom: insets.bottom + space.xxl }} keyboardShouldPersistTaps="handled" keyboardDismissMode="interactive" automaticallyAdjustKeyboardInsets>
             <View style={styles.column}>{body}</View>
           </ScrollView>
         </View>
@@ -427,7 +455,7 @@ export function HelpSheet({ help, visible, onClose }: { help: Help; visible: boo
       <Pressable style={[styles.scrim, { paddingHorizontal: 0 }]} onPress={onClose} accessibilityLabel="Close help">
         <Pressable style={[styles.helpSheet, { backgroundColor: t.surface, paddingBottom: insets.bottom + space.md }]} onPress={() => undefined}>
           <View style={[styles.grabber, { backgroundColor: t.border }]} />
-          <ScrollView style={{ flexGrow: 0, flexShrink: 1 }} contentContainerStyle={{ padding: space.lg }}>
+          <ScrollView style={{ flexGrow: 0, flexShrink: 1 }} contentContainerStyle={{ padding: space.lg }} keyboardShouldPersistTaps="handled" keyboardDismissMode="interactive" automaticallyAdjustKeyboardInsets>
             {body}
           </ScrollView>
           <View style={{ paddingHorizontal: space.lg }}>
@@ -506,8 +534,11 @@ export function Button({
   disabled,
   style,
   compact,
+  accessibilityLabel,
 }: {
   label: string;
+  // Spoken instead of the label when the same label repeats down a list.
+  accessibilityLabel?: string;
   onPress: () => void;
   variant?: Variant;
   icon?: IconName;
@@ -523,13 +554,13 @@ export function Button({
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel={label}
+      accessibilityLabel={accessibilityLabel ?? label}
       accessibilityState={{ disabled: !!off, busy: !!busy }}
       onPress={
         off
           ? undefined
           : () => {
-              tap();
+              commit();
               onPress();
             }
       }
@@ -617,7 +648,14 @@ export function ListRow({
   mono,
   monoTitle,
   leading,
+  expanded,
+  control,
 }: {
+  // The row opens or closes in place: said to a screen reader.
+  expanded?: boolean;
+  // `right` holds its own control (a switch, a stepper, a delete button). It
+  // sits beside the row, not inside it, so VoiceOver reaches both.
+  control?: boolean;
   // Custom leading artwork (a maker logo) in place of the icon square.
   leading?: React.ReactNode;
   icon?: IconName;
@@ -640,74 +678,213 @@ export function ListRow({
 }) {
   const t = useTheme();
   const tone = toneColours(t, iconTone);
-  const content = (
+  const interactive = !!onPress && !disabled;
+  const split = !!control && !!right;
+  const lead = (
     <>
       {leading ? <View style={{ marginRight: space.md }}>{leading}</View> : null}
       {icon && !leading ? (
         <View style={[styles.rowIcon, { backgroundColor: iconColour ? t[iconColour] : tone.bg }]}>
-          <Icon name={icon} size={17} color={iconColour ? onTool(iconColour) : tone.fg} />
+          <Icon name={icon} size={17} color={iconColour ? onTool(iconColour, t) : tone.fg} />
         </View>
       ) : null}
-      <View style={[styles.rowMain, { borderColor: t.border, borderTopWidth: first ? 0 : StyleSheet.hairlineWidth }]}>
-        {/* Padding also for a title that wraps, so it never touches the lines. */}
-        <View style={{ flex: 1, paddingVertical: 10 }}>
-          <Text style={[type.body, { color: t.text }, monoTitle && styles.monoTitle]}>{title}</Text>
-          {subtitle ? <Text style={[type.sub, { color: t.muted, marginTop: 1 }]}>{subtitle}</Text> : null}
+    </>
+  );
+  const rowBorder = { borderColor: t.border, borderTopWidth: first ? 0 : StyleSheet.hairlineWidth };
+  const text = (
+    <>
+      {/* Padding also for a title that wraps, so it never touches the lines. */}
+      <View style={{ flex: 1, paddingVertical: 10 }}>
+        <Text style={[type.body, { color: t.text }, monoTitle && styles.monoTitle]}>{title}</Text>
+        {subtitle ? <Text style={[type.sub, { color: t.muted, marginTop: 1 }]}>{subtitle}</Text> : null}
+      </View>
+      {/* A trailing value is 1 or 2 words; anything longer belongs in the subtitle, so the title keeps its width. */}
+      {value ? (
+        <Text numberOfLines={2} style={[type.body, type.number, { color: t.muted, flexShrink: 1, maxWidth: '50%', textAlign: 'right', paddingVertical: 10 }, mono && styles.mono]}>
+          {value}
+        </Text>
+      ) : null}
+    </>
+  );
+  const trail = (
+    <>
+      {/* A choice row keeps a fixed slot for its tick, so values line up whether ticked or not. */}
+      {selected != null && noChevron ? (
+        <View style={styles.tick}>{selected ? <Icon name="check" size={17} color={t.accentText} /> : null}</View>
+      ) : selected ? (
+        <Icon name="check" size={17} color={t.accentText} />
+      ) : null}
+      {interactive && !noChevron && selected == null ? <Icon name="chevron-right" size={13} color={t.faint} /> : null}
+    </>
+  );
+  const state = selected != null || expanded != null ? { ...(selected != null ? { checked: selected } : null), ...(expanded != null ? { expanded } : null) } : undefined;
+  const role = selected != null && noChevron ? 'checkbox' : 'button';
+  const label = [title, subtitle, value].filter(Boolean).join('. ');
+  // A tick for a choice; a row that goes to another page makes no haptic.
+  const press = () => {
+    if (noChevron || selected != null) tap();
+    onPress?.();
+  };
+  const rowStyle = [styles.listRow, { opacity: disabled ? 0.45 : 1 }];
+  // A row with its own control: the row is a plain container holding the
+  // label and the control as two separate elements.
+  if (split) {
+    const info = (
+      <>
+        {lead}
+        <View style={[styles.rowMain, rowBorder, { paddingRight: space.sm }]}>
+          {text}
+          {trail}
         </View>
-        {/* A trailing value is 1 or 2 words; anything longer belongs in the subtitle, so the title keeps its width. */}
-        {value ? (
-          <Text numberOfLines={2} style={[type.body, type.number, { color: t.muted, flexShrink: 1, maxWidth: '50%', textAlign: 'right', paddingVertical: 10 }, mono && styles.mono]}>
-            {value}
-          </Text>
-        ) : null}
+      </>
+    );
+    return (
+      <View style={[...rowStyle, styles.listRowSplit]}>
+        {interactive ? (
+          <Pressable accessibilityRole={role} accessibilityState={state} accessibilityLabel={label} onPress={press} style={({ pressed }) => [styles.rowPress, pressed && { backgroundColor: t.raised }]}>
+            {info}
+          </Pressable>
+        ) : (
+          <View accessible accessibilityLabel={label} style={styles.rowPress}>
+            {info}
+          </View>
+        )}
+        <View style={[styles.rowRight, rowBorder]}>{right}</View>
+      </View>
+    );
+  }
+  const content = (
+    <>
+      {lead}
+      <View style={[styles.rowMain, rowBorder]}>
+        {text}
         {right ? <View style={{ alignSelf: 'center' }}>{right}</View> : null}
-        {/* A choice row keeps a fixed slot for its tick, so values line up whether ticked or not. */}
-        {selected != null && noChevron ? (
-          <View style={styles.tick}>{selected ? <Icon name="check" size={17} color={t.accentText} /> : null}</View>
-        ) : selected ? (
-          <Icon name="check" size={17} color={t.accentText} />
-        ) : null}
-        {onPress && !disabled && !noChevron && selected == null ? <Icon name="chevron-right" size={13} color={t.faint} /> : null}
+        {trail}
       </View>
     </>
   );
-  const style = [styles.listRow, { opacity: disabled ? 0.45 : 1 }];
-  if (!onPress || disabled) {
+  if (!interactive) {
     return (
-      <View style={style} accessible accessibilityState={{ disabled: !!disabled }}>
+      <View style={rowStyle} accessible accessibilityState={{ disabled: !!disabled }}>
         {content}
       </View>
     );
   }
   return (
-    <Pressable
-      accessibilityRole={selected != null && noChevron ? 'checkbox' : 'button'}
-      accessibilityState={selected != null ? { checked: selected } : undefined}
-      accessibilityLabel={[title, subtitle, value].filter(Boolean).join('. ')}
-      onPress={() => {
-        tap();
-        onPress();
-      }}
-      style={({ pressed }) => [style, pressed && { backgroundColor: t.raised }]}
-    >
+    <Pressable accessibilityRole={role} accessibilityState={state} accessibilityLabel={label} onPress={press} style={({ pressed }) => [rowStyle, pressed && { backgroundColor: t.raised }]}>
       {content}
     </Pressable>
+  );
+}
+
+// A switch row: title and description with a switch at the right, on the
+// same shell as ListRow. The row is one element for VoiceOver (a switch, the
+// description as its hint); the visible switch is the same control.
+export function ToggleRow({
+  title,
+  subtitle,
+  value,
+  onChange,
+  first,
+  disabled,
+  icon,
+  iconColour,
+  badge,
+}: {
+  title: string;
+  subtitle?: string;
+  value: boolean;
+  onChange: (on: boolean) => void;
+  first?: boolean;
+  disabled?: boolean;
+  icon?: IconName;
+  iconColour?: ToolColour;
+  // A short tag after the title (Changed): shown as a pill and spoken in the hint.
+  badge?: string;
+}) {
+  const t = useTheme();
+  return (
+    <View
+      accessible
+      accessibilityRole="switch"
+      accessibilityLabel={title}
+      accessibilityHint={[badge, subtitle].filter(Boolean).join('. ') || undefined}
+      accessibilityState={{ checked: value, disabled: !!disabled }}
+      accessibilityActions={[{ name: 'activate' }]}
+      onAccessibilityAction={(e) => {
+        if (e.nativeEvent.actionName === 'activate' && !disabled) {
+          tap();
+          onChange(!value);
+        }
+      }}
+      style={[styles.listRow, { opacity: disabled ? 0.45 : 1 }]}
+    >
+      {icon ? (
+        <View style={[styles.rowIcon, { backgroundColor: iconColour ? t[iconColour] : t.sunken }]}>
+          <Icon name={icon} size={17} color={iconColour ? onTool(iconColour, t) : t.muted} />
+        </View>
+      ) : null}
+      <View style={[styles.rowMain, { borderColor: t.border, borderTopWidth: first ? 0 : StyleSheet.hairlineWidth }]}>
+        <View style={{ flex: 1, paddingVertical: 10 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+            <Text style={[type.body, { color: t.text, flexShrink: 1 }]}>{title}</Text>
+            {badge ? <Pill text={badge} tone="accent" /> : null}
+          </View>
+          {subtitle ? <Text style={[type.sub, { color: t.muted, marginTop: 1 }]}>{subtitle}</Text> : null}
+        </View>
+        <Toggle value={value} onChange={onChange} disabled={disabled} hidden />
+      </View>
+    </View>
+  );
+}
+
+// The one switch: green when on, and an off track that shows against the card.
+// Give it a label when it is not inside a ToggleRow (hidden: the row speaks
+// for it).
+export function Toggle({ value, onChange, disabled, label, hidden }: { value: boolean; onChange: (on: boolean) => void; disabled?: boolean; label?: string; hidden?: boolean }) {
+  const t = useTheme();
+  return (
+    <Switch
+      value={value}
+      disabled={disabled}
+      onValueChange={(on) => {
+        tap();
+        onChange(on);
+      }}
+      trackColor={{ true: t.green, false: t.switchOff }}
+      ios_backgroundColor={t.switchOff}
+      accessibilityLabel={label}
+      accessibilityElementsHidden={hidden}
+      importantForAccessibility={hidden ? 'no-hide-descendants' : 'auto'}
+    />
   );
 }
 
 export function Notice({ text, tone = 'neutral', icon }: { text: string; tone?: Tone; icon?: IconName }) {
   const t = useTheme();
   const c = toneColours(t, tone);
+  // A result or an error is spoken when it appears.
+  React.useEffect(() => {
+    if (tone === 'danger' || tone === 'ok') announceResult(text);
+  }, [text, tone]);
+  // Colour is never the only sign of a result: a fault or a success has an icon.
+  const mark = icon ?? (tone === 'danger' ? 'alert-circle-outline' : tone === 'ok' ? 'check-circle-outline' : undefined);
   return (
-    <View style={[styles.notice, { backgroundColor: tone === 'neutral' ? t.surface : c.bg }]}>
-      {icon ? <Icon name={icon} size={18} color={c.fg} /> : null}
-      <Text style={[type.sub, { color: tone === 'neutral' ? t.text : c.fg, flex: 1 }]}>{text}</Text>
+    <View
+      accessibilityRole={tone === 'danger' ? 'alert' : undefined}
+      accessibilityLiveRegion={tone === 'danger' || tone === 'ok' ? liveRegion : undefined}
+      style={[styles.notice, { backgroundColor: tone === 'neutral' ? t.surface : c.bg }]}
+    >
+      {mark ? <Icon name={mark} size={18} color={c.fg} /> : null}
+      <Text selectable style={[type.sub, { color: tone === 'neutral' ? t.text : c.fg, flex: 1 }]}>
+        {text}
+      </Text>
     </View>
   );
 }
 
 // The one text field: a sunken well with the label above it in small muted
-// type. No border and no ring; the orange cursor shows focus. Without a label
+// type. A 1 pt outline keeps its edge at 3:1; the orange cursor shows focus. Without a label
 // it sits in a row beside a button (flex: 1 through style).
 export function Field({
   label,
@@ -780,7 +957,7 @@ export function Field({
         style={[
           type.body,
           styles.field,
-          { color: t.text, backgroundColor: t.sunken },
+          { color: t.text, backgroundColor: t.sunken, borderColor: t.outline },
           number && type.number,
           mono && { fontFamily: MONO },
           multiline && styles.fieldMultiline,
@@ -837,7 +1014,7 @@ export function Chip({
         tap();
         onPress();
       }}
-      style={({ pressed }) => [styles.chip, tall && styles.chipTall, { backgroundColor: bg, opacity: disabled ? 0.4 : pressed ? 0.6 : 1 }]}
+      style={({ pressed }) => [styles.chip, tall && styles.chipTall, { backgroundColor: bg, borderColor: selected ? 'transparent' : t.outline, opacity: disabled ? 0.4 : pressed ? 0.6 : 1 }]}
     >
       <Text style={[type.sub, type.number, { color: fg, fontWeight: '600' }, mono && { fontFamily: MONO }]}>{label}</Text>
       {count != null ? <Text style={[type.small, type.number, { color: selected ? t.onAccent : t.muted }]}>{count.toLocaleString('en-GB')}</Text> : null}
@@ -910,7 +1087,7 @@ export function Segmented<T extends string>({
 }) {
   const t = useTheme();
   return (
-    <View style={[styles.segmented, { backgroundColor: t.sunken }, style]} accessibilityRole={role === 'radio' ? 'radiogroup' : 'tablist'}>
+    <View style={[styles.segmented, { backgroundColor: t.sunken, borderColor: t.outline }, style]} accessibilityRole={role === 'radio' ? 'radiogroup' : 'tablist'}>
       {options.map((o) => {
         const on = o.id === value;
         const c = o.tone ? toneColours(t, o.tone) : null;
@@ -919,12 +1096,12 @@ export function Segmented<T extends string>({
             key={o.id}
             accessibilityRole={role}
             accessibilityState={role === 'radio' ? { checked: on } : { selected: on }}
-            accessibilityLabel={label ? `${label}: ${o.label}` : undefined}
+            accessibilityLabel={label ? `${label}: ${o.label}${o.badge ? `, ${o.badge}` : ''}` : o.badge ? `${o.label}, ${o.badge}` : undefined}
             onPress={() => {
               tap();
               onPick(o.id);
             }}
-            style={[styles.segment, on && { backgroundColor: t.surface }]}
+            style={[styles.segment, on && { backgroundColor: t.surface, borderColor: t.outline }]}
           >
             {on && c ? <View style={[StyleSheet.absoluteFill, styles.segmentWash, { backgroundColor: c.bg }]} /> : null}
             <Text numberOfLines={1} style={[type.sub, { color: on ? (c ? c.fg : t.text) : t.muted, fontWeight: on ? '600' : '500' }]}>
@@ -943,7 +1120,9 @@ export function Segmented<T extends string>({
 }
 
 // Lower and higher around a value: 2 orange-soft buttons, tap target 44 pt.
-export function Stepper({ value, onStep, disabled, width = 78, noLower, noHigher }: { value: string; onStep: (d: 1 | -1) => void; disabled?: boolean; width?: number; noLower?: boolean; noHigher?: boolean }) {
+// One adjustable element for VoiceOver (swipe up or down to step); the label
+// says what is being set.
+export function Stepper({ value, onStep, disabled, width = 78, noLower, noHigher, label }: { value: string; onStep: (d: 1 | -1) => void; disabled?: boolean; width?: number; noLower?: boolean; noHigher?: boolean; label?: string }) {
   const t = useTheme();
   const button = (d: 1 | -1) => {
     const off = disabled || (d < 0 ? noLower : noHigher);
@@ -951,6 +1130,7 @@ export function Stepper({ value, onStep, disabled, width = 78, noLower, noHigher
     <Pressable
       accessibilityRole="button"
       accessibilityLabel={d < 0 ? 'Lower' : 'Higher'}
+      accessibilityState={{ disabled: !!off }}
       disabled={off}
       onPress={() => {
         tap();
@@ -963,7 +1143,22 @@ export function Stepper({ value, onStep, disabled, width = 78, noLower, noHigher
     );
   };
   return (
-    <View style={styles.stepper}>
+    <View
+      style={styles.stepper}
+      accessible
+      accessibilityRole="adjustable"
+      accessibilityLabel={label ?? 'Value'}
+      accessibilityValue={{ text: value }}
+      accessibilityState={{ disabled: !!disabled }}
+      accessibilityActions={[{ name: 'increment' }, { name: 'decrement' }]}
+      onAccessibilityAction={(e) => {
+        const d = e.nativeEvent.actionName === 'increment' ? 1 : e.nativeEvent.actionName === 'decrement' ? -1 : 0;
+        if (d && !disabled && !(d < 0 ? noLower : noHigher)) {
+          tap();
+          onStep(d);
+        }
+      }}
+    >
       {button(-1)}
       <Text style={[type.body, type.number, { color: t.text, minWidth: width, textAlign: 'center' }]}>{value}</Text>
       {button(1)}
@@ -974,7 +1169,7 @@ export function Stepper({ value, onStep, disabled, width = 78, noLower, noHigher
 export function SearchField({ value, onChange, placeholder, caps = true }: { value: string; onChange: (v: string) => void; placeholder: string; caps?: boolean }) {
   const t = useTheme();
   return (
-    <View style={[styles.search, { backgroundColor: t.sunken }]}>
+    <View style={[styles.search, { backgroundColor: t.sunken, borderColor: t.outline }]}>
       <Icon name="magnify" size={16} color={t.muted} />
       <TextInput
         value={value}
@@ -990,7 +1185,7 @@ export function SearchField({ value, onChange, placeholder, caps = true }: { val
         style={[type.body, { flex: 1, color: t.text, paddingVertical: 8 }, Platform.OS === 'web' && ({ outlineStyle: 'none' } as object)]}
       />
       {value && Platform.OS !== 'ios' ? (
-        <Pressable accessibilityRole="button" accessibilityLabel="Clear search" onPress={() => onChange('')} hitSlop={12}>
+        <Pressable accessibilityRole="button" accessibilityLabel="Clear search" onPress={() => onChange('')} hitSlop={16}>
           <Icon name="close-circle" size={16} color={t.muted} />
         </Pressable>
       ) : null}
@@ -1000,6 +1195,50 @@ export function SearchField({ value, onChange, placeholder, caps = true }: { val
 
 // Action-sheet style confirmation: message and the destructive action in one
 // group, Cancel in its own below, as iOS lays it out.
+// The page sheet used by the pickers and editors: a native page sheet on
+// iPhone with Cancel and Done in the bar, a rounded sheet elsewhere. The
+// content goes below the bar; leave onDone out for a sheet that only closes.
+export function SheetPage({
+  visible,
+  title,
+  onCancel,
+  onDone,
+  doneLabel = 'Done',
+  children,
+}: {
+  visible: boolean;
+  title: string;
+  onCancel: () => void;
+  onDone?: () => void;
+  doneLabel?: string;
+  children: React.ReactNode;
+}) {
+  const t = useTheme();
+  const ios = Platform.OS === 'ios';
+  return (
+    <Modal visible={visible} animationType="slide" presentationStyle={ios ? 'pageSheet' : undefined} transparent={!ios} onRequestClose={onCancel}>
+      <View style={[{ flex: 1, backgroundColor: t.bg }, !ios && styles.sheetWeb]}>
+        <View style={[styles.sheetBar, { borderColor: t.border }]}>
+          <Pressable accessibilityRole="button" hitSlop={10} onPress={onCancel} style={styles.barButton}>
+            <Text style={[type.body, { color: t.accentText }]}>Cancel</Text>
+          </Pressable>
+          <Text numberOfLines={1} style={[type.heading, { color: t.text, flex: 1, textAlign: 'center' }]}>
+            {title}
+          </Text>
+          {onDone ? (
+            <Pressable accessibilityRole="button" hitSlop={10} onPress={onDone} style={[styles.barButton, { alignItems: 'flex-end' }]}>
+              <Text style={[type.body, { color: t.accentText, fontWeight: '600' }]}>{doneLabel}</Text>
+            </Pressable>
+          ) : (
+            <View style={styles.barButton} />
+          )}
+        </View>
+        {children}
+      </View>
+    </Modal>
+  );
+}
+
 export function ConfirmSheet({
   visible,
   title,
@@ -1083,11 +1322,30 @@ export function ProgressBar({ value, label, done, total, startedAt }: { value: n
   const counts = done != null && total ? `${Math.min(done, total).toLocaleString('en-GB')} of ${total.toLocaleString('en-GB')}` : null;
   const eta = !startedAt ? null : done != null && total ? timeLeft(done, total, startedAt) : pct > 0.02 ? timeLeft(Math.round(pct * 1000), 1000, startedAt) : null;
   const anim = React.useRef(new Animated.Value(pct)).current;
+  const reduce = useReduceMotion();
+  // The fill is drawn at full width and scaled from its left edge, so the native driver can run it.
   React.useEffect(() => {
-    Animated.timing(anim, { toValue: pct, duration: 400, easing: Easing.out(Easing.exp), useNativeDriver: false }).start();
-  }, [pct, anim]);
+    if (reduce) {
+      anim.setValue(pct);
+      return undefined;
+    }
+    const run = Animated.timing(anim, { toValue: pct, duration: 400, easing: Easing.out(Easing.exp), useNativeDriver: true });
+    run.start();
+    return () => run.stop();
+  }, [pct, anim, reduce]);
+  // Spoken at each quarter and at the end, so a long run is not silent.
+  const spoken = React.useRef(0);
+  React.useEffect(() => {
+    const step = pct >= 1 ? 4 : Math.floor(pct * 4);
+    // A bar reused for a second run starts again from the quarter it is at.
+    if (step < spoken.current) spoken.current = step;
+    else if (step > spoken.current) {
+      spoken.current = step;
+      announce(step === 4 ? `${label || 'Progress'}: finished` : `${label || 'Progress'}: ${step * 25} percent`);
+    }
+  }, [pct, label]);
   return (
-    <View accessibilityRole="progressbar" accessibilityValue={{ min: 0, max: 100, now: Math.round(pct * 100) }}>
+    <View accessible accessibilityRole="progressbar" accessibilityLabel={label || 'Progress'} accessibilityValue={{ min: 0, max: 100, now: Math.round(pct * 100) }}>
       <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8 }}>
         <Text style={[type.sub, { color: t.muted, flex: 1 }]} numberOfLines={1}>
           {label ?? ''}
@@ -1095,9 +1353,7 @@ export function ProgressBar({ value, label, done, total, startedAt }: { value: n
         <Text style={[type.sub, type.number, { color: t.text, fontWeight: '600' }]}>{Math.round(pct * 100)}%</Text>
       </View>
       <View style={{ height: 4, borderRadius: 2, backgroundColor: t.sunken, overflow: 'hidden' }}>
-        <Animated.View
-          style={{ height: 4, borderRadius: 2, backgroundColor: t.accent, width: anim.interpolate({ inputRange: [0, 1], outputRange: ['0%', '100%'] }) }}
-        />
+        <Animated.View style={{ height: 4, backgroundColor: t.accent, transformOrigin: 'left', transform: [{ scaleX: anim }] }} />
       </View>
       {counts || (startedAt && eta) ? (
         <Text style={[type.small, type.number, { color: t.muted, marginTop: 6 }]}>
@@ -1189,6 +1445,9 @@ export function NeedsConnection({ what, title }: { what?: string; title?: string
 }
 
 const styles = StyleSheet.create({
+  sheetWeb: { marginTop: 60, borderTopLeftRadius: 14, borderTopRightRadius: 14, overflow: 'hidden' },
+  sheetBar: { flexDirection: 'row', alignItems: 'center', minHeight: 56, paddingHorizontal: space.lg, borderBottomWidth: StyleSheet.hairlineWidth },
+  barButton: { width: 80, minHeight: 44, justifyContent: 'center' },
   column: { width: '100%', maxWidth: 640, alignSelf: 'center' },
   headerButton: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
   largeTitleRow: { flexDirection: 'row', alignItems: 'center', marginBottom: space.lg, marginTop: space.sm },
@@ -1199,15 +1458,15 @@ const styles = StyleSheet.create({
   labelRow: { flexDirection: 'row', alignItems: 'center', marginLeft: space.lg, marginRight: space.xs, marginBottom: 2, marginTop: -6 },
   stepNum: { width: 24, height: 24, borderRadius: 12, alignItems: 'center', justifyContent: 'center', marginTop: -1 },
   step: { flexDirection: 'row', gap: space.md, alignItems: 'flex-start', marginBottom: space.sm },
-  field: { borderRadius: radius.field, paddingHorizontal: space.md, paddingVertical: 10, minHeight: 44 },
+  field: { borderRadius: radius.field, borderWidth: 1, paddingHorizontal: space.md, paddingVertical: 10, minHeight: 44 },
   fieldMultiline: { minHeight: 90, textAlignVertical: 'top' },
-  chip: { flexDirection: 'row', alignItems: 'center', gap: 6, minHeight: 36, paddingHorizontal: 14, borderRadius: 18 },
+  chip: { flexDirection: 'row', alignItems: 'center', gap: 6, minHeight: 36, paddingHorizontal: 14, borderRadius: 18, borderWidth: 1 },
   chipTall: { minHeight: 44, borderRadius: 22 },
   chips: { flexDirection: 'row', flexWrap: 'wrap', gap: space.sm },
   chipScroll: { flexGrow: 0, marginBottom: space.lg },
   chipScrollContent: { gap: space.sm, paddingVertical: space.xs },
-  segmented: { flexDirection: 'row', borderRadius: radius.field, padding: 2, minHeight: 48 },
-  segment: { flex: 1, minHeight: 44, flexDirection: 'row', gap: 6, alignItems: 'center', justifyContent: 'center', borderRadius: 8, paddingHorizontal: space.xs, overflow: 'hidden' },
+  segmented: { flexDirection: 'row', borderRadius: radius.field, borderWidth: 1, padding: 2, minHeight: 50 },
+  segment: { flex: 1, minHeight: 44, flexDirection: 'row', gap: 6, alignItems: 'center', justifyContent: 'center', borderRadius: 8, borderWidth: 1, borderColor: 'transparent', paddingHorizontal: space.xs, overflow: 'hidden' },
   segmentWash: { borderRadius: 8 },
   segmentBadge: { minWidth: 18, height: 18, borderRadius: 9, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 5 },
   stepper: { flexDirection: 'row', alignItems: 'center', gap: space.xs },
@@ -1242,10 +1501,13 @@ const styles = StyleSheet.create({
   mono: { fontFamily: MONO, fontSize: 14 },
   monoTitle: { fontFamily: MONO, fontSize: 16 },
   listRow: { flexDirection: 'row', alignItems: 'center', paddingLeft: space.lg, minHeight: 50 },
+  listRowSplit: { paddingLeft: 0 },
+  rowPress: { flex: 1, flexDirection: 'row', alignItems: 'center', alignSelf: 'stretch', paddingLeft: space.lg, minHeight: 50 },
+  rowRight: { alignSelf: 'stretch', justifyContent: 'center', paddingLeft: space.sm, paddingRight: space.lg },
   rowMain: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: space.sm, alignSelf: 'stretch', minHeight: 50, paddingRight: space.lg, marginLeft: 0 },
   rowIcon: { width: 30, height: 30, borderRadius: 7, alignItems: 'center', justifyContent: 'center', marginRight: space.md },
   notice: { flexDirection: 'row', gap: space.sm, alignItems: 'flex-start', borderRadius: radius.md, padding: space.md, marginBottom: space.lg },
-  search: { flexDirection: 'row', alignItems: 'center', gap: 6, borderRadius: 10, paddingHorizontal: 8, minHeight: 44 },
+  search: { flexDirection: 'row', alignItems: 'center', gap: 6, borderRadius: radius.field, borderWidth: 1, paddingHorizontal: 8, minHeight: 44 },
   scrim: { flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', justifyContent: 'flex-end', paddingHorizontal: space.sm },
   sheet: { borderRadius: 14, overflow: 'hidden' },
   sheetMessage: { paddingHorizontal: space.lg, paddingVertical: space.lg },
@@ -1279,7 +1541,11 @@ export function ModuleRing({ states, size = 170, children }: { states: RingState
   const r = size / 2 - dot;
   const colour = (s: RingState) => (s === 'ok' ? t.ok : s === 'faults' ? t.danger : s === 'current' ? t.accent : s === 'error' ? t.warn : s === 'none' ? t.faint : t.sunken);
   return (
-    <View style={{ width: size, height: size, alignItems: 'center', justifyContent: 'center' }} accessibilityLabel={`${states.filter((s) => s !== 'pending' && s !== 'current').length} of ${states.length} modules checked`}>
+    <View
+      style={{ width: size, height: size, alignItems: 'center', justifyContent: 'center' }}
+      accessible
+      accessibilityLabel={`${states.filter((s) => s !== 'pending' && s !== 'current').length} of ${states.length} modules checked. ${states.filter((s) => s === 'ok').length} clear, ${states.filter((s) => s === 'faults').length} with faults, ${states.filter((s) => s === 'none').length} not fitted`}
+    >
       {states.map((s, i) => {
         const a = (i / n) * Math.PI * 2 - Math.PI / 2;
         const style = {

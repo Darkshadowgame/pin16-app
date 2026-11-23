@@ -1,4 +1,5 @@
 // Knock and timing monitor. Logic and sources: src/monitors/knock.ts.
+import { sleep } from '../async';
 import { useDisplay } from '../fonts';
 import { alertBuzz } from '../sound';
 import { useStayAwake } from '../keepAwake';
@@ -16,7 +17,6 @@ import { useConnection } from '../state';
 import { radius, space, type, useTheme } from '../theme';
 import { Button, GlowCard, Group, ListRow, NeedsConnection, Notice, Screen } from '../ui';
 
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 export default function Knock() {
   const conn = useConnection();
