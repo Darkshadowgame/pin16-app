@@ -164,6 +164,41 @@ describe('live data from older VW modules', () => {
   });
 });
 
+describe('Stop during Find a switch', () => {
+  const leonClient = async () => {
+    const leon = DEMO_CARS.find((c) => c.id === 'leon')!;
+    const c = new ElmClient(new SimTransport(structuredClone(leon), 0));
+    await c.initialise();
+    c.setMake('vag', 'PQ35');
+    return c;
+  };
+
+  it('stops the module scan before the next module when cancelled', async () => {
+    const c = await leonClient();
+    const all = await c.findTp20Modules();
+    expect(all.length).toBeGreaterThan(1);
+    const c2 = await leonClient();
+    let checks = 0;
+    const some = await c2.findTp20Modules(() => ++checks > 1);
+    expect(some.length).toBeLessThan(all.length);
+    const c3 = await leonClient();
+    expect(await c3.findTp20Modules(() => true)).toEqual([]);
+  });
+
+  it('reads no further group once Stop is tapped', async () => {
+    const c = await leonClient();
+    const mods = await c.findTp20Modules();
+    const engine = mods.find((m) => m.id === 'engine')!;
+    const seen: number[] = [];
+    let stop = false;
+    await c.watchMeasuringGroups(engine, [115, 115, 115, 115], (g) => {
+      seen.push(g);
+      stop = true;
+    }, () => !stop);
+    expect(seen).toHaveLength(1);
+  });
+});
+
 describe('listen mode', () => {
   it('records frames, then the adapter works normally again', async () => {
     const c = new ElmClient(new SimTransport(DEMO_CARS.find((x) => x.id === 'a6')!, 0));

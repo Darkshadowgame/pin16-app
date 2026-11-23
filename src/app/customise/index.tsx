@@ -14,7 +14,9 @@ import { categoriesFor, modsForVehicle, STATUS_LABEL } from '../../mods/catalogu
 import { MODULES } from '../../obd/modules';
 import { preflightCheck } from '../../coding/preflight';
 import { toHex } from '../../obd/uds';
-import { cacheAfterWrite } from '../../diag/timeline';
+import { cacheAfterWrite, stamp } from '../../diag/timeline';
+import { CodingHistory } from '../../coding/history';
+import { loadCodingHistory, onCodingHistory, recordCodings } from '../../coding/historyStore';
 import { useConnection } from '../../state';
 import { space, type, useTheme } from '../../theme';
 import { TOOLS, Chips, ConfirmSheet, Field, GlowCard, Group, Icon, ListRow, NeedsConnection, Notice, Pill, Screen, Stepper, success, tap, tool } from '../../ui';
@@ -114,6 +116,15 @@ export default function Customise() {
       alive.current = false;
     };
   }, []);
+  // Coding history of this car (read-only here; Workshop puts one back).
+  const [codingHist, setCodingHist] = useState<CodingHistory>({});
+  const histVin = v?.vin;
+  useEffect(() => {
+    if (!histVin) return undefined;
+    const load = () => void loadCodingHistory(histVin).then((h) => alive.current && setCodingHist(h));
+    load();
+    return onCodingHistory(load);
+  }, [histVin]);
 
   // Adjustable values (PQ35): current value per key, null when the module has
   // no such channel. Read one module at a time once the settings are read.
@@ -164,6 +175,8 @@ export default function Customise() {
       // switch flipped while other modules were still being read has saved its
       // new coding since, and the old copy would put the old bytes back.
       garage.update(v.vin, { codingCache: { ...(garage.latest(v.vin)?.codingCache ?? {}), ...cache } });
+      // One entry per coding that differs from the newest kept (src/coding/history.ts).
+      void recordCodings(v.vin, Object.entries(cache).filter(([k]) => !k.includes(':')).map(([key, hex]) => ({ key, hex, source: 'read' as const })));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [client, moduleIds.join()]);
@@ -275,6 +288,8 @@ export default function Customise() {
         const def = defOf(moduleId)!;
         const { did } = splitKey(moduleId);
         const before = codings[moduleId]!;
+        // The coding the write starts from, then (below) what the module holds after it.
+        if (!did) void recordCodings(v.vin, [{ key: moduleId, hex: toHex(before), source: 'read' }]);
         const after =
           p.kind === 'item'
             ? withItem(p.item, before, p.on)
@@ -301,6 +316,7 @@ export default function Customise() {
           if (alive.current) setCodings((old) => ({ ...old, [moduleId]: res.coding }));
           // The saved coding follows each write, so Put back decides from what the module holds now.
           await garage.update(v.vin, { codingCache: cacheAfterWrite(garage.latest(v.vin)?.codingCache, [{ key: moduleId, hex: toHex(res.coding) }]) });
+          if (!did) void recordCodings(v.vin, [{ key: moduleId, hex: toHex(res.coding), source: res.ok ? 'written' : 'read' }]);
         }
         if (!res.ok) {
           if (settingId && p.kind !== 'restore' && p.on) await mark(settingId, 'refused');
@@ -872,6 +888,24 @@ export default function Customise() {
               />
             );
           })}
+        </Group>
+      ) : null}
+
+      {Object.values(codingHist).some((l) => l.length) ? (
+        <Group header="Coding history" help={SECTIONS.moduleCodingHistory} footer="Every coding read from or written to each module on this car. Tap one to see what changed and to put an earlier coding back.">
+          {Object.entries(codingHist)
+            .filter(([, l]) => l.length)
+            .map(([key, l], i) => (
+              <ListRow
+                key={key}
+                first={i === 0}
+                icon="history"
+                iconColour="grey"
+                title={defOf(key)?.name ?? key}
+                subtitle={`${l.length} coding${l.length === 1 ? '' : 's'} kept, latest ${stamp(l[0].at).date} ${stamp(l[0].at).time}`}
+                onPress={() => router.push({ pathname: '/workshop/[id]', params: { id: key, tab: 'coding' } })}
+              />
+            ))}
         </Group>
       ) : null}
 

@@ -570,16 +570,20 @@ export class ElmClient {
   }
 
   // VW modules that answer over TP2.0 on this car. Probes each candidate once.
-  async findTp20Modules(): Promise<ModuleDef[]> {
+  // cancelled() is checked before each module and each route, so a Stop takes
+  // effect within one probe.
+  async findTp20Modules(cancelled?: () => boolean): Promise<ModuleDef[]> {
     if (this.make !== 'vag' || !this.supportsModules) return [];
     const defs = await this.modulesForCar('vag');
     const out: ModuleDef[] = [];
     this.holdRaw++;
     try {
       for (const def of defs) {
+        if (cancelled?.()) break;
         const w = this.winner.get(def.id);
         if (w && w.via !== 'tp20') continue;
         for (const r of await this.routesFor(def)) {
+          if (cancelled?.()) break;
           if (r.via !== 'tp20') continue;
           if (await this.tp20(r.address, async () => true)) {
             this.winner.set(def.id, r);

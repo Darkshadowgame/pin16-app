@@ -25,6 +25,7 @@ import { mergeCodingBackup, mergeModuleIds } from '../vehicle/ids';
 import { inferredFromParts, Vehicle, vehicleTitle } from '../vehicle/garage';
 import { groupValuesText, moduleCount, modulesText, sensorCount, sensorCountText } from '../vehicle/counts';
 import { scanValueGroups } from './valueGroups';
+import { recordCodings } from '../coding/historyStore';
 import { dateText, shortDuration } from '../timeText';
 
 export type LearnStep = 'modules' | 'faults' | 'sensors' | 'values' | 'emissions' | 'mot' | 'battery' | 'send';
@@ -304,6 +305,8 @@ export async function runLearn(d: LearnDeps): Promise<LearnSummary> {
   const saveModules = async (read: ModuleDetails[]) => {
     const now = garage.latest(vin);
     const mine = facts.filter((f) => read.some((r) => r.def.id === f.id));
+    // Each coding read is kept in the coding history (src/coding/history.ts).
+    void recordCodings(vin, mine.filter((f) => f.coding).map((f) => ({ key: f.id, hex: f.coding!, source: 'read' as const })));
     const codingCache = Object.fromEntries(mine.filter((f) => f.coding && f.route !== 'tp20' && /^([0-9A-F]{2})+$/.test(f.coding)).map((f) => [f.id, f.coding!]));
     const codingBackup = mergeCodingBackup(now?.codingBackup, mine.map((f) => ({ module: f.name, part: f.part ?? null, coding: f.coding ?? null })));
     await garage.update(vin, {

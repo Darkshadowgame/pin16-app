@@ -22,7 +22,10 @@ import { SECTIONS } from '../../help';
 import { FaultRow } from '../../components/CodeRow';
 import { allowSleep, stayAwake } from '../../keepAwake';
 import { mergeModuleIds } from '../../vehicle/ids';
-import { cacheAfterWrite } from '../../diag/timeline';
+import { cacheAfterWrite, stamp } from '../../diag/timeline';
+import { checkTypedWhen, CodingHistory, CodingSource, validateCodingHex, addCoding } from '../../coding/history';
+import { loadCodingHistory, onCodingHistory, recordCodings } from '../../coding/historyStore';
+import { CodingHistoryList } from '../../components/CodingHistoryList';
 import { sendLogNow } from '../../share/sendLog';
 
 const hex2 = (n: number) => n.toString(16).toUpperCase().padStart(2, '0');
@@ -39,18 +42,18 @@ export default function ControlModule() {
   const conn = useConnection();
   const garage = useGarage();
   const { settings } = useSettings();
-  const { id } = useLocalSearchParams<{ id: string }>();
+  const { id, tab: startTab } = useLocalSearchParams<{ id: string; tab?: string }>();
   const client = conn.client;
   const v = conn.vehicle;
   const def = client?.moduleById(String(id));
 
-  const [tab, setTab] = useState<Tab>('faults');
+  const [tab, setTab] = useState<Tab>(startTab === 'coding' ? 'coding' : 'faults');
   const [info, setInfo] = useState<ModuleDetails | null>(null);
   const [faults, setFaults] = useState<ModuleFaults | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [message, setMessage] = useState<{ tone: 'ok' | 'danger' | 'info'; text: string } | null>(null);
   // note: the low-battery line for the result, when a write does not save.
-  const [confirm, setConfirm] = useState<{ kind: 'clear' | 'write' | 'restore'; note?: string } | null>(null);
+  const [confirm, setConfirm] = useState<{ kind: 'clear' | 'write' | 'restore' | 'putback'; note?: string; hex?: string; when?: string; typed?: boolean } | null>(null);
   // Values
   const [values, setValues] = useState<Record<string, SensorValue>>({});
   const [watching, setWatching] = useState(false);
@@ -63,6 +66,11 @@ export default function ControlModule() {
   const [coding, setCoding] = useState<number[] | null>(null);
   const [draft, setDraft] = useState<number[] | null>(null);
   const [openByte, setOpenByte] = useState<number | null>(null);
+  // Coding history of this car, and the "Add a coding by hand" form.
+  const [history, setHistory] = useState<CodingHistory>({});
+  const [byHand, setByHand] = useState<{ hex: string; when: string; note: string } | null>(null);
+  // Why the typed date was refused, shown under the date field.
+  const [whenError, setWhenError] = useState<string | null>(null);
   const alive = useRef(true);
   useEffect(() => {
     alive.current = true;
@@ -70,6 +78,16 @@ export default function ControlModule() {
       alive.current = false;
     };
   }, []);
+  const vin = v?.vin;
+  useEffect(() => {
+    if (!vin) return undefined;
+    const load = () => void loadCodingHistory(vin).then((h) => alive.current && setHistory(h));
+    load();
+    return onCodingHistory(load);
+  }, [vin]);
+  const remember = (hex: string | number[], source: CodingSource, note?: string) => {
+    if (vin && def) void recordCodings(vin, [{ key: def.id, hex: typeof hex === 'string' ? hex : toHex(hex), source, note }]);
+  };
 
   const run = async (key: string, fn: () => Promise<void>) => {
     setBusy(key);
@@ -103,6 +121,7 @@ export default function ControlModule() {
         setCoding(c);
         setDraft(c);
       }
+      if (v && c && c.length) void recordCodings(v.vin, [{ key: def.id, hex: toHex(c), source: 'read' }]);
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [client, def?.id]);
@@ -200,13 +219,37 @@ export default function ControlModule() {
       setCells(await client.readMeasuringBlock(def, g));
     });
 
-  const askWrite = async (kind: 'write' | 'restore') => {
+  const askWrite = async (kind: 'write' | 'restore' | 'putback', hex?: string, when?: string, typed?: boolean) => {
     const check = await preflightCheck(client);
     if (check.block) {
       setMessage({ tone: 'danger', text: check.block });
       return;
     }
-    setConfirm({ kind, note: check.note ?? undefined });
+    setConfirm({ kind, note: check.note ?? undefined, hex, when, typed });
+  };
+
+  // A coding typed in from another tool's log, saved in time order.
+  const saveByHand = () => {
+    if (!byHand || !coding) return;
+    const ok = validateCodingHex(byHand.hex, coding.length);
+    if (!ok.ok) {
+      setMessage({ tone: 'danger', text: ok.reason });
+      return;
+    }
+    const when = checkTypedWhen(byHand.when, Date.now(), history[def.id]);
+    if (!when.ok) {
+      setWhenError(when.reason);
+      return;
+    }
+    setWhenError(null);
+    // The same coding next to that date is already held: nothing to add.
+    if (addCoding(history, def.id, ok.hex, when.at, 'typed', byHand.note) === history) {
+      setMessage({ tone: 'info', text: 'That coding is already in the history at that date. Nothing was added.' });
+      return;
+    }
+    void recordCodings(v.vin, [{ key: def.id, hex: ok.hex, source: 'typed', note: byHand.note, at: when.at }]);
+    setByHand(null);
+    setMessage({ tone: 'ok', text: 'Coding added to the history. Nothing was written to the car.' });
   };
 
   const writeCoding = (target: number[], what: string, note?: string) =>
@@ -214,11 +257,14 @@ export default function ControlModule() {
       if (!coding) return;
       const saved = garage.latest(v.vin)?.codingOriginal ?? {};
       if (!saved[def.id]) await garage.update(v.vin, { codingOriginal: { ...saved, [def.id]: toHex(coding) } });
+      remember(coding, 'read');
       const res = await client.writeCoding(def, coding, target);
       // The write has returned, so the car may hold a new coding. Everything
       // kept about it (the values for this connection, the saved coding,
       // History and the diary) is written whether or not this page is still
       // open. Only the page's own state is skipped once it has closed.
+      // The coding read back is kept: as written when the module kept it, as read when it did not.
+      if (res.coding) remember(res.coding, res.ok ? 'written' : 'read');
       if (res.coding) {
         // Customise reuses these while connected, so it shows the new coding.
         client.sessionValues.set(def.id, res.coding);
@@ -364,6 +410,12 @@ export default function ControlModule() {
                 </Group>
               )}
 
+              {kwp ? (
+                <Group header="Find a switch" help={SECTIONS.findSwitch} footer="Reads every value group this module gave Learn my car, round after round, and lists the values that change when you press a switch.">
+                  <ListRow first icon="toggle-switch-outline" iconColour={TOOLS.workshop.colour} title="Find a switch" subtitle="Press a switch and see which value moves." onPress={() => router.push({ pathname: '/find-switch', params: { id: def.id } })} />
+                </Group>
+              ) : null}
+
               {!kwp ? (
                 <Group header="Expert" help={SECTIONS.moduleExpert} footer="Read any value by its 4-character number, as VCDS or ODIS show it. Read-only.">
                   {!expert ? (
@@ -492,6 +544,44 @@ export default function ControlModule() {
                   {changed ? <Button label="Undo my changes" variant="ghost" onPress={() => setDraft(coding)} /> : null}
                   {original && original !== toHex(coding) ? <Button label="Put back original coding" variant="secondary" disabled={!!busy} onPress={() => askWrite('restore')} /> : null}
                 </View>
+
+                <Group
+                  header="Coding history"
+                  help={SECTIONS.moduleCodingHistory}
+                  footer="Every coding Pin16 reads from or writes to this module on this car, newest first. Put back this coding writes that exact coding, with the same checks as Save to the car."
+                >
+                  {history[def.id]?.length ? (
+                    <CodingHistoryList
+                      entries={history[def.id]}
+                      currentHex={toHex(coding)}
+                      busy={!!busy}
+                      onPutBack={(e) => {
+                        const { date, time } = stamp(e.at);
+                        void askWrite('putback', e.hex, `${date} ${time}`, e.source === 'typed');
+                      }}
+                    />
+                  ) : (
+                    <ListRow first icon="information-outline" iconColour="grey" title="Nothing kept yet" subtitle="Each coding read from or written to this module is listed here." noChevron />
+                  )}
+                  {byHand ? (
+                    <View style={[styles.pad, { gap: space.sm }]}>
+                      <Field label={`Coding in hex, ${coding.length} byte${coding.length === 1 ? '' : 's'}`} value={byHand.hex} onChange={(x) => setByHand({ ...byHand, hex: x })} placeholder="98 80 08" caps="characters" mono accessibilityLabel="Coding in hex" />
+                      <Field label="Date, optional" value={byHand.when} onChange={(x) => {
+                        setWhenError(null);
+                        setByHand({ ...byHand, when: x });
+                      }} placeholder="2026-11-20 14:30" keyboard="numbers-and-punctuation" accessibilityLabel="Date of the coding, optional" />
+                      {whenError ? <Notice tone="danger" icon="alert-circle-outline" text={whenError} /> : null}
+                      <Field label="Note, optional" value={byHand.note} onChange={(x) => setByHand({ ...byHand, note: x })} placeholder="From another tool's log" accessibilityLabel="Note, optional" />
+                      <Button label="Add to the history" variant="secondary" onPress={saveByHand} />
+                      <Button label="Cancel" variant="ghost" onPress={() => {
+                        setWhenError(null);
+                        setByHand(null);
+                      }} />
+                    </View>
+                  ) : (
+                    <ListRow icon="plus-circle-outline" iconColour={TOOLS.workshop.colour} title="Add a coding by hand" subtitle="Enter a coding known from another tool's log. It is only listed here, not written to the car." onPress={() => setByHand({ hex: '', when: '', note: '' })} />
+                  )}
+                </Group>
               </>
             ) : (
               <Group>
@@ -508,21 +598,24 @@ export default function ControlModule() {
 
       <ConfirmSheet
         visible={!!confirm}
-        title={confirm?.kind === 'clear' ? `Clear ${def.name} faults?` : confirm?.kind === 'restore' ? 'Put back the original coding?' : `Save new ${def.name} coding?`}
+        title={confirm?.kind === 'clear' ? `Clear ${def.name} faults?` : confirm?.kind === 'restore' ? 'Put back the original coding?' : confirm?.kind === 'putback' ? 'Put back this coding?' : `Save new ${def.name} coding?`}
         lines={[
           ...(confirm?.kind === 'clear'
             ? ['Works with the engine running. A few modules only clear with the engine off and the ignition on.', 'Clears this module’s faults. Faults that are still present come back.']
             : confirm?.kind === 'restore'
               ? ['Puts back the coding this module had before Pin16 first changed it.']
+              : confirm?.kind === 'putback'
+                ? [`Writes the coding from ${confirm.when ?? 'the history'} to ${def.name}.`, ...(confirm.typed ? ['This coding was typed in, not read from the car.'] : []), 'Pin16 saves the current coding first, reads the new one back and puts the current one back if the module does not keep it.']
               : ['Pin16 saves the current coding first, reads the new one back and puts the original back if the module does not keep it.', ...(items.length ? [] : ['These bits have no public names: only change bits you know from a trusted source.'])]),
         ]}
-        confirmLabel={confirm?.kind === 'clear' ? 'Clear faults' : confirm?.kind === 'restore' ? 'Put back' : 'Save to the car'}
+        confirmLabel={confirm?.kind === 'clear' ? 'Clear faults' : confirm?.kind === 'restore' || confirm?.kind === 'putback' ? 'Put back' : 'Save to the car'}
         onCancel={() => setConfirm(null)}
         onConfirm={() => {
           const c = confirm;
           setConfirm(null);
           if (c?.kind === 'clear') clearFaults();
           else if (c?.kind === 'restore' && original) writeCoding(original.match(/../g)!.map((h) => parseInt(h, 16)), 'original coding put back', c.note);
+          else if (c?.kind === 'putback' && c.hex) writeCoding(c.hex.match(/../g)!.map((h) => parseInt(h, 16)), 'earlier coding put back', c.note);
           else if (c?.kind === 'write' && draft) writeCoding(draft, 'coding saved', c.note);
         }}
       />

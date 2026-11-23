@@ -48,6 +48,7 @@ const ICON: Record<GuideId, IconName> = {
   boost: 'turbine' as IconName,
   carReference: 'book-open-page-variant' as IconName,
   calibrations: 'tune-vertical' as IconName,
+  findSwitch: 'toggle-switch-outline' as IconName,
 };
 
 const firstSentence = (s: string) => {

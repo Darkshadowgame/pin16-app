@@ -15,6 +15,7 @@ import { useGarage } from '../../vehicle/garage';
 import { SECTIONS } from '../../help';
 import { dateTimeText } from '../../timeText';
 import { useStayAwake } from '../../keepAwake';
+import { recordCodings } from '../../coding/historyStore';
 
 const hex2 = (n: number) => n.toString(16).toUpperCase().padStart(2, '0');
 
@@ -85,6 +86,7 @@ export default function Learn() {
       if (c && c.length) {
         out[ids[i]] = toHex(c);
         client.sessionValues.set(ids[i], c);
+        if (v) void recordCodings(v.vin, [{ key: ids[i], hex: toHex(c), source: 'read' }]);
       }
     }
     return out;

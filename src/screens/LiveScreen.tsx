@@ -18,6 +18,9 @@ import { ModuleDef } from '../obd/modules';
 import { MeasuringCell } from '../obd/tp20';
 import { groupLabels, groupName, GROUP_NAMES } from '../data/groupLabels';
 import { SECTIONS } from '../help';
+import { NamedText, NameTarget, NameValueForm } from '../components/NameValue';
+import { lookupValueName, ValueName } from '../data/valueNames';
+import { useValueNames } from '../data/valueNamesStore';
 import { radius, space, type, useTheme } from '../theme';
 void Title;
 import { Body, Button, Chip, ConfirmSheet, Field, Group, Icon, IconName, Label, ListRow, NeedsConnection, Notice, ProgressBar, SearchField, Title, tool, TOOLS } from '../ui';
@@ -601,6 +604,14 @@ function MeasuringBlocks() {
   const [live, setLive] = useState(false);
   const [found, setFound] = useState<{ group: number; cells: MeasuringCell[] }[]>([]);
   const [pct, setPct] = useState(0);
+  const ownNames = useValueNames(conn.vehicle?.vin);
+  // The Name form that is open: the field (0 based) and the module, group and
+  // field it was opened for. Save uses this, never the current selection.
+  const [naming, setNaming] = useState<{ index: number; target: NameTarget; existing?: ValueName } | null>(null);
+  // Another module or group closes the form.
+  useEffect(() => {
+    setNaming(null);
+  }, [module?.id, group]);
   const liveRef = React.useRef(false);
   useEffect(
     () => () => {
@@ -711,15 +722,27 @@ function MeasuringBlocks() {
               <Button label={live ? 'Stop' : 'Live'} icon={live ? 'stop' : 'chart-timeline-variant'} variant={live ? 'secondary' : 'primary'} onPress={toggleLive} disabled={!!busy} />
               <Button label="Read every group of this module" icon="magnify" variant="ghost" busy={busy === 'scan'} disabled={!!busy || live} onPress={scanAll} />
               <Body muted small>Reads groups 1 to 255 now and shows what each holds. Learn my car reads them too and keeps the list below.</Body>
+              {module && savedGroups.length ? <Button label="Find a switch" icon="toggle-switch-outline" variant="ghost" disabled={!!busy || live} onPress={() => router.push({ pathname: '/find-switch', params: { id: module.id } })} /> : null}
             </View>
             {cells ? (
               cells.length ? (
-                cells.map((c, i) => (
-                  <View key={i} style={[styles.makerRow, { borderColor: t.border }]}>
-                    <Text style={[styles.makerLabel, { color: t.text, flex: 1 }]}>{groupLabels(module?.code, group)?.[i] ?? `Field ${i + 1}`}</Text>
-                    <Text style={[styles.makerValue, { color: t.text }]}>{fmt(c)}</Text>
-                  </View>
-                ))
+                cells.map((c, i) => {
+                  const own = module ? lookupValueName(ownNames, module.id, group, i + 1) : undefined;
+                  return (
+                    <View key={i}>
+                      <View style={[styles.makerRow, { borderColor: t.border }]}>
+                        <Pressable accessibilityRole="button" accessibilityLabel={`${own ? 'Rename' : 'Name'} field ${i + 1}`} onPress={() => setNaming(naming?.index === i ? null : module ? { index: i, target: { moduleId: module.id, moduleCode: module.code, group, field: i + 1, unit: c.unit, changed: fmt(c) }, existing: own } : null)} style={{ flex: 1 }}>
+                          <NamedText own={own} builtIn={groupLabels(module?.code, group)?.[i]} fallback={`Field ${i + 1}`} style={styles.makerLabel} />
+                          <Text style={[type.caption, { color: t.accentText }]}>{own ? 'Rename' : 'Name'}</Text>
+                        </Pressable>
+                        <Text style={[styles.makerValue, { color: t.text }]}>{fmt(c)}</Text>
+                      </View>
+                      {naming?.index === i && conn.vehicle ? (
+                        <NameValueForm key={`${naming.target.moduleId}.${naming.target.group}.${naming.target.field}`} v={conn.vehicle} target={naming.target} existing={naming.existing} onClose={() => setNaming(null)} />
+                      ) : null}
+                    </View>
+                  );
+                })
               ) : (
                 <Body muted small style={{ marginTop: space.md }}>This group is empty on this module.</Body>
               )

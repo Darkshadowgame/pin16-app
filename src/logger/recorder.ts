@@ -7,6 +7,8 @@
 // share adapter time between the sources (see scheduler.ts).
 import type { ElmClient } from '../obd/elm';
 import { groupLabels } from '../data/groupLabels';
+import { lookupValueName } from '../data/valueNames';
+import { loadValueNames } from '../data/valueNamesStore';
 import type { ModuleDef } from '../obd/modules';
 import { LivePid, PidGroup } from '../obd/pids';
 import { categoryOf, sensorId, SensorRow, sensorsForCar, unitOf } from '../obd/sensors';
@@ -68,7 +70,9 @@ export async function channelOptions(client: ElmClient, v: Vehicle | null): Prom
     });
   }
 
-  // Older VW measuring groups Learn my car found, numbers only.
+  // Older VW measuring groups Learn my car found, numbers only. A name the
+  // owner gave a value wins over the built-in one.
+  const ownNames = await loadValueNames(v.vin);
   for (const [moduleId, groups] of Object.entries(v.groupsFound ?? {})) {
     const def = client.moduleById(moduleId);
     if (!def) continue;
@@ -77,12 +81,13 @@ export async function channelOptions(client: ElmClient, v: Vehicle | null): Prom
       const names = groupLabels(def.code, group);
       units.forEach((unit, field) => {
         if (unit === 'bits' || unit === '') return;
-        const name = names?.[field];
+        const own = lookupValueName(ownNames, moduleId, group, field + 1)?.name;
+        const name = own ?? names?.[field];
         out.push({
           channel: {
             key: groupKey(moduleId, group, field),
             source: 'group',
-            label: name ? `${name} (group ${group})` : `${def.name} group ${group} field ${field + 1}`,
+            label: own ? `${own} (group ${group}, your name)` : name ? `${name} (group ${group})` : `${def.name} group ${group} field ${field + 1}`,
             unit,
             decimals: UNIT_DECIMALS[unit] ?? 1,
           },

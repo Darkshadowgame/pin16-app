@@ -59,6 +59,7 @@ export default function RootLayout() {
             <Stack.Screen name="service-reset" options={{ title: 'Reset with the adapter', headerRight: () => <GuideButton id="serviceReset" /> }} />
             <Stack.Screen name="modules" options={{ title: 'Read part numbers', headerRight: () => <GuideButton id="partNumbers" /> }} />
             <Stack.Screen name="workshop/index" options={{ title: 'Workshop', headerRight: () => <GuideButton id="workshop" /> }} />
+            <Stack.Screen name="find-switch" options={{ title: 'Find a switch', headerRight: () => <GuideButton id="findSwitch" /> }} />
             <Stack.Screen name="calibrations" options={{ title: 'Calibrations', headerRight: () => <GuideButton id="calibrations" /> }} />
             <Stack.Screen name="fuses" options={{ title: 'Fuses and manuals', headerRight: () => <GuideButton id="fuses" /> }} />
             <Stack.Screen name="listen" options={{ title: 'Listen mode', headerRight: () => <GuideButton id="listen" /> }} />

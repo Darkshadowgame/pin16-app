@@ -47,9 +47,26 @@ export type GuideId =
   | 'fuelTrims'
   | 'boost'
   | 'carReference'
-  | 'calibrations';
+  | 'calibrations'
+  | 'findSwitch';
 
 export const GUIDES: Record<GuideId, Help> = {
+  findSwitch: {
+    title: 'Find a switch',
+    what: 'Finds which value of an older VW module moves when you press a switch.',
+    how: [
+      'Open it from a module’s Values tab, or from Live data under Older VW modules. Pin16 reads every value group Learn my car found for that module, round after round.',
+      'Start, wait for the first round, then press and release the switch you are looking for. The values that change are listed.',
+      'Each line gives the group and field, the value in the first round and the value now. Bits show as 8 binary digits. The latest change is at the top, with how many times it changed.',
+      'Values that never change are not listed. A value that moves by itself, such as a temperature, changes again and again, so the switch is the one that changes only when you press it.',
+      'Name this value, under a changed value, gives it your own name (for example Boot handle pressed) and an optional note on what you saw. Your name shows in 3 places, marked your name: in this list, in an open group in Live data under Older VW modules, and in the data logger’s channel label for that value.',
+      'Names you give are saved on this phone and sent to your private findings store, so they can be built into the app.',
+      'Set baseline again forgets the changes and takes the next full round as the new starting point.',
+      'The round time shows how long all the groups take to read. A short press can fall between two rounds, so press and hold for a moment if nothing shows.',
+      'Going back while it runs asks first. The screen stays awake while it runs.',
+    ],
+    note: 'Read-only: nothing is written to the car. If no groups are found yet, run Learn my car first.',
+  },
   home: {
     title: 'Car',
     what: 'The home page for the connected car: its health at a glance and every tool one tap away.',
@@ -369,6 +386,7 @@ export const GUIDES: Record<GuideId, Help> = {
       'Coding: named switches and every byte of the coding. Nothing changes in the car until you tap Save to the car.',
       'Saving keeps the original coding, reads the new one back and puts the original back if the module does not keep it.',
       'Put back original coding puts back what the module had before Pin16 first changed it.',
+      'Coding history, under the Coding tab, lists every coding Pin16 read from or wrote to this module, with what changed between them. Put back this coding writes an earlier one.',
     ],
     note: 'Only change bits you know from a trusted source.',
   },
@@ -594,7 +612,7 @@ export const GUIDE_GROUPS: { title: string; ids: GuideId[] }[] = [
   { title: 'Drive monitors', ids: ['monitors', 'knock', 'dpf', 'trip'] },
   { title: 'Change settings', ids: ['customise', 'learnSetting', 'customiseGuide', 'service', 'serviceReset', 'diagChanges'] },
   { title: 'Tools', ids: ['knowledge', 'fuses', 'diary', 'diaryAdd'] },
-  { title: 'Expert', ids: ['workshop', 'calibrations', 'module', 'partNumbers', 'learnCar', 'discover', 'listen'] },
+  { title: 'Expert', ids: ['workshop', 'calibrations', 'module', 'findSwitch', 'partNumbers', 'learnCar', 'discover', 'listen'] },
   { title: 'App', ids: ['settings'] },
 ];
 
@@ -651,6 +669,18 @@ export const SECTIONS: Record<string, Help> = {
       'An empty group has no values on this module.',
     ],
   },
+  moduleCodingHistory: {
+    title: 'Coding history',
+    what: 'Every coding Pin16 has read from or written to this module on this car, newest first.',
+    how: [
+      'Each entry shows the date and time, where it came from (Read from the car, Written by Pin16, Typed in) and what changed against the entry before it. A byte change reads, for example, Byte 0: 98 to 90 (bit 3 off). Bit 0 is the lowest bit.',
+      'A 3-byte coding also shows as the number other tools use, for example 0006401.',
+      'Put back this coding writes that exact coding, with the same checks and result messages as Save to the car. Pin16 asks first. A coding with a different length cannot be put back.',
+      'Add a coding by hand saves a coding you know from another tool’s log, with an optional date (2026-11-20 or 2026-11-20 14:30) and a note. It is only listed here and is not written to the car.',
+      'Pin16 keeps the newest 30 for each module. Customise, under Coding history, lists the same entries.',
+    ],
+  },
+  findSwitch: GUIDES.findSwitch,
   moduleExpert: {
     title: 'Expert',
     what: 'Reads any value from this module by its 4-character number, as VCDS or ODIS show it.',
@@ -909,6 +939,7 @@ export const SECTIONS: Record<string, Help> = {
       'Use − and + or a preset to pick a group. Live keeps reading it.',
       'Read every group of this module reads groups 1 to 255 and lists the ones with values. Learn my car reads them too and keeps the list.',
       'Values with an unknown formula are shown raw.',
+      'Tap a value’s name in an open group, then Name, to give it your own name and a note. Your name shows in 3 places, marked your name: in that open group, in the changed list in Find a switch, and in the data logger’s channel label for that value. Names you give are saved on this phone and sent to your private findings store, so they can be built into the app.',
     ],
   },
   // Discover

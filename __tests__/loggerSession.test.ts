@@ -9,6 +9,7 @@ import type { GpsSource, GpsStart } from '../src/logger/gps';
 import { saveLog } from '../src/logger/store';
 
 jest.mock('../src/logger/store', () => ({ saveLog: jest.fn(async () => undefined) }));
+jest.mock('../src/data/valueNamesStore', () => ({ loadValueNames: async () => ({}) }));
 
 const saved = saveLog as jest.MockedFunction<typeof saveLog>;
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
