@@ -159,6 +159,9 @@ export function vinInBytes(bytes: number[]): string | null {
   return null;
 }
 
+// Character 9 of a European Ford VIN built at Saarlouis (GC).
+const FORD_EU_MODELS: Record<string, string> = { D: 'Focus', C: 'Focus' };
+
 export function decodeVin(raw: string): DecodedVin {
   const vin = raw.trim().toUpperCase();
   const valid = isValidVin(vin);
@@ -178,6 +181,23 @@ export function decodeVin(raw: string): DecodedVin {
   // Opel and Vauxhall: characters 5 and 6. Only the code seen on a real car is
   // listed (W0L0SDL..., a Corsa D; decoder lists and sale listings agree).
   if (w.brand === 'Opel / Vauxhall' && vin.slice(4, 6) === 'SD') out.model = 'Corsa D';
+  // European Ford (Ford workshop manual, section 100-01 Identification Codes):
+  // characters 5 and 6 are a constant XX, 7 and 8 the plant, 9 the model, 11
+  // the year of manufacture and 12 the month. The manual lists D as Focus
+  // (2004 on). C is the code on the owner's 2015 Focus ST built at Saarlouis
+  // (GC); it is not in a published table. The manual gives the year digits
+  // 3 to 9 for 2003 to 2009, the same as the standard year code, so letters
+  // are read with the standard code (F is 2015).
+  if (w.group === 'ford' && w.euYear && vin.slice(4, 6) === 'XX') {
+    const fordModel = FORD_EU_MODELS[vin[8]];
+    if (fordModel && vin.slice(6, 8) === 'GC') out.model = fordModel;
+    const built = modelYearFromCode(vin[10]);
+    if (built) {
+      out.year = built;
+      out.yearReliable = true;
+    }
+    return out;
+  }
   const year = modelYearFromCode(vin[9]);
   if (year) {
     out.year = year;

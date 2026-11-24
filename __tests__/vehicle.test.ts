@@ -21,8 +21,8 @@ describe('VIN decoding', () => {
     expect(decodeVin('WF05XXGCC5FM00000').group).toBe('ford');
   });
 
-  it('flags European Ford years as unreliable', () => {
-    const d = decodeVin('WF0XXXGCDXKA00001');
+  it('flags a European Ford year as unreliable when the VIN lacks the constant XX', () => {
+    const d = decodeVin('WF0XABGCDXKA00001');
     expect(d.group).toBe('ford');
     expect(d.yearReliable).toBe(false);
   });
@@ -92,6 +92,21 @@ describe('fault code library', () => {
 
 describe('Opel and Vauxhall VINs', () => {
   const { decodeVin } = require('../src/vehicle/vin');
+  it('names a European Ford Focus and reads its year from character 11', () => {
+    const d = decodeVin('WF05XXGCC5FM00001');
+    expect(d.brand).toBe('Ford');
+    expect(d.model).toBe('Focus');
+    expect(d.year).toBe(2015);
+    expect(d.yearReliable).toBe(true);
+    expect(decodeVin('WF05XXGCD58M00001').model).toBe('Focus');
+    expect(decodeVin('WF05XXGCD58M00001').year).toBe(2008);
+  });
+
+  it('leaves a European Ford model unnamed for an unknown plant or model code', () => {
+    expect(decodeVin('WF05XXWPC5FM00001').model).toBeNull();
+    expect(decodeVin('WF05XXGCZ5FM00001').model).toBeNull();
+  });
+
   it('names the make, model and year of a 2011 Corsa D', () => {
     const d = decodeVin('W0L0SDL68B4000001');
     expect(d.brand).toBe('Opel / Vauxhall');
