@@ -70,6 +70,8 @@ export default function Diagnostics() {
   const [confirm, setConfirm] = useState<Confirm>(null);
   const [volts, setVolts] = useState<number | null>(null);
   const [showMissing, setShowMissing] = useState(false);
+  // Modules opened to their faults; a lone module with faults opens by itself.
+  const [openIds, setOpenIds] = useState<Record<string, boolean>>({});
   // Modules the car's gateway listed beyond the fixed list arrive with their results.
   const defs = [...baseDefs, ...Object.values(results).map((r) => r.def).filter((d) => !baseDefs.some((b) => b.id === d.id))];
   const [deep, setDeep] = useState<Tp20Module[] | null>(null);
@@ -452,23 +454,51 @@ export default function Diagnostics() {
   const scanning = busy === 'scan';
   const incomplete = info.monitors.filter((m) => m.state === 'incomplete').length;
   const anyToClear = total > 0 || obdFaults > 0 || info.milOn;
-  // Faults first, then healthy modules, then the one being read; modules that
-  // did not answer (not fitted) are folded away.
+  // Faults first, then healthy modules, then ones that could not be read;
+  // modules that did not answer (not fitted) are folded away.
   const rank = (id: string) => {
     const r = results[id];
-    return !r ? 2 : r.state === 'faults' ? 0 : r.state === 'ok' || r.state === 'error' ? 1 : 3;
+    return !r ? 3 : r.state === 'faults' ? 0 : r.state === 'ok' ? 1 : r.state === 'error' ? 2 : 4;
   };
-  const shownDefs = defs
-    .filter((d) => (results[d.id] ? results[d.id].state !== 'no-answer' : scanning && current === d.name))
-    // Reorder only once the scan ends, so cards do not jump while it runs.
+  // While the check runs the list shows the module being read and those done,
+  // and (once the car's modules are known) those still to ask as Waiting.
+  const waiting = scanning ? defs.filter((d) => !results[d.id] && current !== d.name) : [];
+  const listDefs = defs
+    .filter((d) => (results[d.id] ? results[d.id].state !== 'no-answer' : scanning && (current === d.name || mode === 'quick')))
+    // Reorder only once the check ends, so rows do not jump while it runs.
     .sort((a, b) => (scanning ? 0 : rank(a.id) - rank(b.id)));
   const missing = defs.filter((d) => results[d.id]?.state === 'no-answer' && !olderIds.has(d.id));
   const faulty = defs.filter((d) => results[d.id]?.state === 'faults');
-  const healthy = defs.filter((d) => results[d.id]?.state === 'ok');
   const unread = defs.filter((d) => results[d.id]?.state === 'error');
 
   const pct = steps ? progress / steps : 0;
   const alert = total > 0 || info.milOn;
+
+  // One clear button for everything the check found; the confirm sheet and the rules for it are unchanged.
+  const clearAll =
+    !scanning && anyToClear ? <Button label="Clear all faults" icon="broom" variant="danger" disabled={!!busy} onPress={() => setConfirm({ kind: 'all' })} style={{ marginBottom: space.lg }} /> : null;
+  // What to do next with the result.
+  const after = !scanning ? (
+    <>
+      <Button label="Check again" icon={TOOLS.health.icon} variant={total ? 'secondary' : 'primary'} disabled={!!busy} onPress={() => scan()} style={{ marginBottom: space.lg }} />
+      <Group footer={busy === 'deep' ? 'Available when the check finishes.' : undefined}>
+        <ListRow first icon="file-document-outline" iconColour={TOOLS.report.colour} title="Make health report" onPress={() => router.push('/report')} />
+        <ListRow icon="clipboard-list-outline" iconColour={TOOLS.mot.colour} title="MOT check" subtitle="Can use this health check" onPress={() => router.push('/mot')} />
+        <ListRow
+          icon="clipboard-check-outline"
+          iconColour={TOOLS.emissions.colour}
+          title="Emissions self-tests"
+          subtitle="Which self-tests have run, with test results and calibration IDs where the engine keeps them"
+          disabled={!!busy}
+          onPress={() => router.push('/emissions-tests')}
+        />
+        {withModules && mode === 'quick' ? (
+          <ListRow icon="radar" iconColour={TOOLS.sensors.colour} title="Check every address" subtitle="This was a quick check of the modules your car has. A full check runs by itself every 30 days." disabled={!!busy} onPress={() => scan(true)} />
+        ) : null}
+      </Group>
+      {diff ? <ScanChanges diff={diff} /> : null}
+    </>
+  ) : null;
 
   return (
     <Screen>
@@ -558,85 +588,42 @@ export default function Diagnostics() {
         />
       ) : null}
 
-      {/* What to do next, straight under the result. */}
-      {!scanning ? (
-        <Button
-          label="Check again"
-          icon={TOOLS.health.icon}
-          variant={total ? 'secondary' : 'primary'}
-          disabled={!!busy}
-          onPress={() => scan()}
-          style={{ marginBottom: space.lg }}
-        />
-      ) : null}
-      {!scanning ? (
-        <Group footer={busy === 'deep' ? 'Available when the check finishes.' : undefined}>
-          <ListRow first icon="file-document-outline" iconColour={TOOLS.report.colour} title="Make health report" onPress={() => router.push('/report')} />
-          <ListRow icon="clipboard-list-outline" iconColour={TOOLS.mot.colour} title="MOT check" subtitle="Can use this health check" onPress={() => router.push('/mot')} />
-          <ListRow
-            icon="clipboard-check-outline"
-            iconColour={TOOLS.emissions.colour}
-            title="Emissions self-tests"
-            subtitle="Which self-tests have run, with test results and calibration IDs where the engine keeps them"
-            disabled={!!busy}
-            onPress={() => router.push('/emissions-tests')}
-          />
-          {withModules && mode === 'quick' ? (
-            <ListRow icon="radar" iconColour={TOOLS.sensors.colour} title="Check every address" subtitle="This was a quick check of the modules your car has. A full check runs by itself every 30 days." disabled={!!busy} onPress={() => scan(true)} />
-          ) : null}
-          {/* The riskiest action goes last, and is grey; the confirm sheet guards it. */}
-          {anyToClear ? <ListRow icon="broom" iconColour="grey" title="Clear all faults" disabled={!!busy} onPress={() => setConfirm({ kind: 'all' })} /> : null}
-        </Group>
-      ) : null}
-
-      {!scanning && diff ? <ScanChanges diff={diff} /> : null}
-
       {withModules ? (
         <>
-          {scanning && shownDefs.length ? (
-            <Group header="Control modules" help={SECTIONS.diagModules}>
-              {shownDefs.map((def, i) => (
-                <Arrive key={def.id}>
-                  <ModuleBlock def={def} first={i === 0} result={results[def.id]} active={current === def.name} disabled onClear={() => undefined} />
-                </Arrive>
-              ))}
-            </Group>
-          ) : null}
-          {!scanning
-            ? faulty.map((def, k) => (
-                <Arrive key={def.id}>
-                  <Group header={`${def.name}${def.code && group === 'vag' ? ` · ${def.code}` : ''}`} help={k === 0 ? SECTIONS.diagFaults : undefined}>
-                    {results[def.id].faults.map((f, i) => (
-                      <FaultRow key={f.code} fault={f} module={def.name} moduleId={f.kwp ? undefined : def.id} detailModuleId={f.kwp ? def.id : undefined} first={i === 0} />
-                    ))}
-                    <Pressable
-                      accessibilityRole="button"
-                      disabled={!!busy}
-                      onPress={() => {
-                        tap();
-                        setConfirm({ kind: 'module', def });
-                      }}
-                      style={({ pressed }) => [styles.clearRow, { borderColor: t.border, backgroundColor: pressed ? t.raised : 'transparent', opacity: busy ? 0.4 : 1 }]}
-                    >
-                      <Text style={[type.body, { color: t.danger }]}>Clear {def.name} faults</Text>
-                    </Pressable>
-                  </Group>
-                </Arrive>
-              ))
-            : null}
-          {!scanning && unread.length ? (
-            <Arrive>
-              <Group header="Could not read" help={SECTIONS.diagCouldNotRead} footer="Switch the engine off, leave the ignition on, then tap Try these again.">
-                {unread.map((def, i) => (
-                  <ListRow
-                    key={def.id}
-                    first={i === 0}
-                    icon="help-circle-outline"
-                    iconColour="gold"
-                    title={def.name}
-                    subtitle={results[def.id]?.error}
-                  />
-                ))}
+          {/* One list of the car's modules: it fills in while the check runs, then shows faults first. */}
+          {listDefs.length ? (
+            <Group
+              header="Control modules"
+              help={SECTIONS.diagModules}
+              footer={
+                scanning
+                  ? waiting.length && mode === 'full'
+                    ? `${waiting.length} more address${waiting.length === 1 ? '' : 'es'} to ask. Modules that do not answer are left out.`
+                    : undefined
+                  : unread.length
+                    ? 'Switch the engine off, leave the ignition on, then tap Try these again.'
+                    : undefined
+              }
+            >
+              {listDefs.map((def, i) => {
+                const r = results[def.id];
+                const isOpen = openIds[def.id] ?? (faulty.length === 1 && r?.state === 'faults');
+                return (
+                  <Arrive key={def.id}>
+                    <ModuleBlock
+                      def={def}
+                      first={i === 0}
+                      result={r}
+                      active={scanning && current === def.name}
+                      open={isOpen}
+                      busy={!!busy}
+                      onToggle={() => setOpenIds((old) => ({ ...old, [def.id]: !isOpen }))}
+                      onClear={() => setConfirm({ kind: 'module', def })}
+                    />
+                  </Arrive>
+                );
+              })}
+              {!scanning && unread.length ? (
                 <Pressable
                   accessibilityRole="button"
                   disabled={!!busy}
@@ -648,18 +635,10 @@ export default function Diagnostics() {
                 >
                   <Text style={[type.body, { color: t.accentText }]}>Try these again</Text>
                 </Pressable>
-              </Group>
-            </Arrive>
+              ) : null}
+            </Group>
           ) : null}
-          {!scanning && healthy.length ? (
-            <Arrive>
-              <Group header="No faults" help={SECTIONS.diagModules}>
-                {healthy.map((def, i) => (
-                  <ModuleBlock key={def.id} def={def} first={i === 0} result={results[def.id]} active={false} disabled onClear={() => undefined} />
-                ))}
-              </Group>
-            </Arrive>
-          ) : null}
+          {clearAll}
           {!scanning && missing.some((d) => results[d.id]?.error === SECOND_BUS_ADAPTER_TEXT) ? <Notice icon="information-outline" text={SECOND_BUS_NOTICE} /> : null}
           {missing.length && !scanning ? (
             <Group
@@ -745,16 +724,21 @@ export default function Diagnostics() {
               )}
             </Group>
           ) : null}
+          {after}
         </>
       ) : (
-        <Notice
-          icon="information-outline"
-          text={
-            group === 'other'
-              ? 'Module checks are set up for VW group, Ford and Mazda. Other makes get the standard engine check below.'
-              : 'Your car uses an older protocol, so only the standard engine check is available.'
-          }
-        />
+        <>
+          <Notice
+            icon="information-outline"
+            text={
+              group === 'other'
+                ? 'Module checks are set up for VW group, Ford and Mazda. Other makes get the standard engine check below.'
+                : 'Your car uses an older protocol, so only the standard engine check is available.'
+            }
+          />
+          {clearAll}
+          {after}
+        </>
       )}
 
       <Group
@@ -853,19 +837,26 @@ export default function Diagnostics() {
   );
 }
 
+// One control module in the list: waiting, being read, ticked over to "No
+// faults" or "N faults", or could not be read. A module with faults opens to
+// its faults, each with its code and plain text, and its own clear row.
 function ModuleBlock({
   def,
   result,
   active,
-  disabled,
   first,
+  open,
+  busy,
+  onToggle,
   onClear,
 }: {
   def: ModuleDef;
   result?: ModuleFaults;
   active: boolean;
-  disabled: boolean;
   first: boolean;
+  open: boolean;
+  busy: boolean;
+  onToggle: () => void;
   onClear: () => void;
 }) {
   const t = useTheme();
@@ -873,15 +864,25 @@ function ModuleBlock({
   const vag = useConnection().vehicle?.group === 'vag';
   const state = result?.state;
   const n = result?.faults.length ?? 0;
-  const right = !result ? (
-    active ? <ActivityIndicator size="small" color={t.muted} /> : null
+  const word = !result ? (active ? 'Reading' : 'Waiting') : state === 'faults' ? `${n} fault${n === 1 ? '' : 's'}` : state === 'ok' ? 'No faults' : 'Could not read';
+  const pill = !result ? (
+    active ? (
+      <View style={styles.reading}>
+        <ActivityIndicator size="small" color={t.muted} />
+        <Text style={[type.sub, { color: t.muted }]}>Reading</Text>
+      </View>
+    ) : (
+      <Text style={[type.sub, { color: t.muted }]}>Waiting</Text>
+    )
   ) : state === 'faults' ? (
-    <Pill text={`${n} fault${n === 1 ? '' : 's'}`} tone="danger" />
+    <Pill text={word} tone="danger" />
   ) : state === 'ok' ? (
-    <Pill text="No faults" tone="ok" />
+    <Pill text={word} tone="ok" icon="check" />
   ) : (
-    <Pill text="Could not read" />
+    <Pill text={word} />
   );
+  const expandable = state === 'faults';
+  const subtitle = state === 'error' && result?.error ? result.error : def.code && vag ? `Address ${def.code}` : undefined;
   return (
     <View>
       <ListRow
@@ -889,10 +890,36 @@ function ModuleBlock({
         icon={state === 'faults' ? 'alert-circle' : state === 'ok' ? 'check-circle' : 'chip'}
         iconColour={state === 'faults' ? 'red' : state === 'ok' ? 'green' : 'grey'}
         title={def.name}
-        subtitle={state === 'error' && result?.error ? result.error : def.code && vag ? `Address ${def.code}` : undefined}
-        right={right}
+        subtitle={subtitle}
+        label={[def.name, word, subtitle].filter(Boolean).join('. ')}
+        right={
+          <View style={styles.reading}>
+            {pill}
+            {expandable ? <Icon name={open ? 'chevron-up' : 'chevron-down'} size={13} color={t.faint} /> : null}
+          </View>
+        }
+        noChevron
+        expanded={expandable ? open : undefined}
+        onPress={expandable ? onToggle : undefined}
       />
-      {result?.faults.map((f) => <FaultRow key={f.code} fault={f} module={def.name} />)}
+      {expandable && open ? (
+        <View>
+          {result!.faults.map((f) => (
+            <FaultRow key={f.code} fault={f} module={def.name} moduleId={f.kwp ? undefined : def.id} detailModuleId={f.kwp ? def.id : undefined} />
+          ))}
+          <Pressable
+            accessibilityRole="button"
+            disabled={busy}
+            onPress={() => {
+              tap();
+              onClear();
+            }}
+            style={({ pressed }) => [styles.clearRow, { borderColor: t.border, backgroundColor: pressed ? t.raised : 'transparent', opacity: busy ? 0.4 : 1 }]}
+          >
+            <Text style={[type.body, { color: t.danger }]}>Clear {def.name} faults</Text>
+          </Pressable>
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -919,6 +946,7 @@ const styles = StyleSheet.create({
   pct: { marginTop: space.sm },
   summaryRow: { flexDirection: 'row', alignItems: 'flex-start', gap: space.md },
   bigRow: { flexDirection: 'row', alignItems: 'flex-end', gap: space.sm },
+  reading: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
   stateIcon: { width: 56, height: 56, borderRadius: radius.lg, alignItems: 'center', justifyContent: 'center' },
   loadingRow: { flexDirection: 'row', alignItems: 'center', gap: space.sm, padding: space.lg },
   clearRow: { borderTopWidth: StyleSheet.hairlineWidth, marginLeft: space.lg, minHeight: 48, justifyContent: 'center' },

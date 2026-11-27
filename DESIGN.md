@@ -276,7 +276,7 @@ Motion is reserved for the car talking back: rings ripple out from the car symbo
 - Graphite ground (`bg`, #131316), grouped secondary surfaces (`surface`), hairline `border` separators.
 - One burnt orange tint (`accent` and `accentText`) for interactive elements.
 - State colours carry meaning: `danger` for faults, `ok` for healthy, neutral grey for everything non-urgent.
-- One fixed colour square per tool: white SF Symbol glyph, near-black on the light squares (gold, teal, green). Red squares are for faults only (Clear faults). Switches that are on are green. The iPhone large title is the plain string "Pin16"; the wordmark shows in the collapsed header.
+- One fixed colour square per tool: white SF Symbol glyph, near-black on the light squares (gold, teal, green). Red squares are for faults only (Clear faults). Switches that are on are green. The iPhone large title is the plain string "Pin16" when no car is connected and "Car" when one is; the wordmark shows in the collapsed header.
 - Inset grouped sections with uppercase headers outside the container.
 - Tabular figures for every number; Menlo for codes.
 - Native chrome: glass tab bar, large-title stacks, blur header, system action sheets.
@@ -428,11 +428,26 @@ A 4px `sunken` track with an `accent` fill that glides to each new value over 40
 ### Module ring (signature)
 One dot per control module around the mark on the health check. Dots fill in as modules answer: green clear, red faults, orange could not read, dim not fitted; the module being asked pulses orange (still under Reduce Motion). `ModuleRing` in src/ui.tsx.
 
-### Tool tile (Home)
-Four main tools as 2-by-2 tiles: a solid tool-colour icon square, title, one-line status, a diagonal glow of the tool colour from the top left (`LinearGradient`, colour at 20% to 0%). Press scales to 0.97.
+### Job card (Car tab, Service, Live data)
+The 4 main jobs are full-width cards, never half-width tiles, in this order: Diagnose, Customise, Service, Live data. A card holds the job's colour square (44px, `rounded.md`, white or near-black glyph from `TOOLS`), the job name in `title3`, one status line in `sub` and a 13px chevron in `faint`. The head is the one button; stats and buttons inside a card (Diagnose carries the fault figure, engine light, self-tests, battery and the 2 buttons) are separate controls below it. Diagnose takes the state wash (`glowOk`, `glowFault`) once a check exists; the others are plain `surface`. Cards sit 12px apart. The Service and Live data screens open with the same card as a header (no chevron), so the 4 areas read as one app. `JobCard` in src/ui.tsx.
+
+### Car header
+A `surface` card at the top of the Car tab: the make badge (44px), the car name in `title` (display face), year, fuel and platform in `sub`, then a line with "VIN ending" and the last 6 characters in Menlo, a Connected pill and a 44px Disconnect text button. The full VIN stays under This car.
+
+### More tools
+Below the 4 job cards, one heading ("More tools", `title3`) introduces every other tool as ordinary grouped sections (History, Learn my car, Driving, This car, Expert, Your cars). Every feature is reachable in at most 2 taps from the Car tab.
+
+### Setting row (Customise)
+`SettingRow` in src/components/SettingRow.tsx: the setting's name in `body`, tags under it (Unconfirmed, Works on your car, Reported by owners as pills), the car's current value in `muted` tabular figures on the right (On, Off, or the value with its unit), then the control. A 2-state setting keeps its green switch in the row and writes at once with no confirm; the name opens the details (description, Technical, Source). A multi-value setting has no switch: the whole row is one button with a chevron that opens a page sheet (`SheetPage`) listing the options with the current one ticked; a pick writes at once and closes the sheet. A setting the car does not have is not drawn. Only Put back and Forget ask first.
+
+### Customise layout
+From the top: the hero line, a search field, filter chips (All, Changed from original, then the categories with counts), 2 compact buttons (Put back original, Coding history) that open their list in place, then one inset group per category with the category as its heading. Categories and their order come from `src/coding/categories.ts`: Lights, Locking, Windows and mirrors, Instruments, Warnings and chimes, Comfort, Other. Anything the data files add is placed by id, then title words, then its own category, so new settings need no screen change. Everything that is not a setting (Get more settings, Change timeline, guides) sits below the list and hides while a search or filter is active.
+
+### Diagnose list
+While a check runs, one "Control modules" group lists the car's modules. The module being read shows a spinner and "Reading"; a finished one ticks to a green "No faults" pill or a red "N faults" pill; one that cannot be read says "Could not read"; modules still to ask say "Waiting" once the car's modules are known. The list keeps its order while it runs. When the check ends it re-sorts: modules with faults first, then clear modules, then those that could not be read. A module with faults opens in place to its faults (code chip, plain title, state) and its own clear row; a lone faulty module opens by itself. One danger button, "Clear all faults", sits under the list and keeps the confirm sheet and its rules. The saved result (`LastScan`) lists modules the same way.
 
 ### Category chips
-Horizontal scrolling pills above long lists (Customise, History): orange fill when selected, surface fill otherwise, count in tabular figures.
+Horizontal scrolling pills above long lists (Customise, History): orange fill when selected, surface fill otherwise, count in tabular figures. On Customise they are the filter: All, Changed from original, then one per category.
 
 ### Pending changes bar
 orange-soft bar under a coding settings list while switches differ from the car: how many bytes changed and a compact Save to the car button. Nothing is written until it is tapped.

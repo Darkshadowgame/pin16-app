@@ -14,7 +14,7 @@ describe('coding items', () => {
     expect(codingItemsFor('vag', 'PQ35').every((i) => i.platforms.includes('PQ35'))).toBe(true);
     // No setting is offered twice for the same bits.
     for (const p of ['MLB', 'MQB', 'PQ35', 'PQ46', 'MLB evo']) {
-      const keys = codingItemsFor('vag', p).map((i) => `${i.module}|${i.byte}|${i.bits.join()}|${i.field?.mask ?? ''}|${i.field?.on ?? ''}`);
+      const keys = codingItemsFor('vag', p).map((i) => `${i.module}|${i.byte}|${i.bits.join()}|${i.field?.mask ?? ''}|${i.field?.on ?? ''}|${i.short?.flag ?? ''}`);
       expect(new Set(keys).size).toBe(keys.length);
     }
     expect(codingItemsFor('ford', null)).toEqual([]);

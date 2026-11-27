@@ -7,7 +7,7 @@ import { addHistory } from '../history';
 import { Make, MAKES, methodsFor, PROCEDURES } from '../service/procedures';
 import { useConnection } from '../state';
 import { radius, space, type, useTheme } from '../theme';
-import { TOOLS, Body, Button, Card, Field, Heading, Icon, Label, Notice, Pill, Screen, Segmented, Step, success, tool } from '../ui';
+import { TOOLS, Body, Button, Card, Field, Heading, Icon, JobCard, Label, Notice, Pill, Screen, Segmented, Step, success, tool } from '../ui';
 import { describeDue, fromKm, markDoneKm, odometerNow, odometerAgeDays, PLANS, planLabel, shouldStoreTypedOdometer, typedService, vehicleServiceDue } from '../service/reminder';
 import { extrasFor } from '../obd/extras';
 import { useSettings } from '../settings';
@@ -115,10 +115,31 @@ export default function Service() {
     if (car?.service) await garage.update(car.vin, { service: { ...car.service, lastDate: today(), lastKm: km } });
   };
 
+  const makeLabel = MAKES.find((m) => m.id === make)!.label;
+  const status = v ? (due ? describeDue(due, miles, distanceStale) : 'Pick an interval to start a reminder') : `${makeLabel} reset guides`;
+  const pq35 = conn.vehicle?.group === 'vag' && conn.vehicle.platform === 'PQ35' && !!conn.client?.supportsModules;
+
   return (
     <Screen>
+      {/* The same card as on the Car tab, then the tools, then the reset by hand. */}
+      <JobCard icon={TOOLS.service.icon} colour={TOOLS.service.colour} title="Service" status={status} statusTone={due?.overdue ? 'danger' : undefined} />
+
+      <Group header="Service tools" help={SECTIONS.serviceObd} footer="For cars that need a tool to reset the reminder. Pin16 learns the reset once, then does it in one tap.">
+        <ListRow
+          first
+          {...tool('service')}
+          title="Reset with the adapter"
+          subtitle={v?.serviceResets?.length ? `${v.serviceResets.length} learned on this car` : 'Learn it once, then reset with one tap'}
+          onPress={() => router.push('/service-reset')}
+        />
+        {pq35 ? <ListRow {...tool('calibrations')} title="Calibrations" subtitle="Flaps and throttle" onPress={() => router.push('/calibrations')} /> : null}
+        {conn.client ? <ListRow {...tool('battery')} title="Battery test" subtitle="Resting and charging voltage" onPress={() => router.push('/battery')} /> : null}
+        {conn.client ? <ListRow {...tool('emissions')} title="Emissions self-tests" subtitle="Which self-tests have run" onPress={() => router.push('/emissions-tests')} /> : null}
+      </Group>
+
+      <Label>Reset by hand</Label>
       <Body muted style={{ marginBottom: space.md }}>
-        Reset the service or oil reminder after a service, with the car’s own buttons, or with the adapter for cars that need a tool.
+        Reset the service or oil reminder after a service, with the car’s own buttons.
       </Body>
 
       {detected ? (
@@ -261,15 +282,6 @@ export default function Service() {
         </>
       ) : null}
 
-      <Group header="Reset with the adapter" help={SECTIONS.serviceObd} footer="For cars that need a tool to reset the reminder. Pin16 learns the reset once, then does it in one tap.">
-        <ListRow
-          first
-          {...tool('service')}
-          title="Reset with the adapter"
-          subtitle={v?.serviceResets?.length ? `${v.serviceResets.length} learned on this car` : 'Learn it once, then reset with one tap'}
-          onPress={() => router.push('/service-reset')}
-        />
-      </Group>
     </Screen>
   );
 }

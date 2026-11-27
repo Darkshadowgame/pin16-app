@@ -650,7 +650,10 @@ export function ListRow({
   leading,
   expanded,
   control,
+  label: spoken,
 }: {
+  // What a screen reader says for the row, when it differs from title, subtitle and value (a state shown as a pill).
+  label?: string;
   // The row opens or closes in place: said to a screen reader.
   expanded?: boolean;
   // `right` holds its own control (a switch, a stepper, a delete button). It
@@ -719,7 +722,7 @@ export function ListRow({
   );
   const state = selected != null || expanded != null ? { ...(selected != null ? { checked: selected } : null), ...(expanded != null ? { expanded } : null) } : undefined;
   const role = selected != null && noChevron ? 'checkbox' : 'button';
-  const label = [title, subtitle, value].filter(Boolean).join('. ');
+  const label = spoken ?? [title, subtitle, value].filter(Boolean).join('. ');
   // A tick for a choice; a row that goes to another page makes no haptic.
   const press = () => {
     if (noChevron || selected != null) tap();
@@ -775,6 +778,80 @@ export function ListRow({
       {content}
     </Pressable>
   );
+}
+
+// One of the 4 main jobs (Diagnose, Customise, Service, Live data): a full-width
+// card with the tool's own colour square, the title, a status line and a
+// chevron. onPress opens the job and covers the head only; children (stats,
+// buttons) sit below it as their own controls. tone washes the card with the
+// state colour, as GlowCard does; without it the card is plain surface. Without
+// onPress the head is a header (Service and Live data) and has no chevron.
+export function JobCard({
+  icon,
+  colour,
+  title,
+  status,
+  onPress,
+  tone,
+  children,
+  style,
+  statusTone,
+}: {
+  icon: IconName;
+  colour: ToolColour;
+  title: string;
+  status?: string;
+  onPress?: () => void;
+  tone?: 'brand' | 'ok' | 'fault' | 'plain';
+  children?: React.ReactNode;
+  style?: ViewStyle;
+  // Colour of the status line when it reports a state (a fault count, a service that is due).
+  statusTone?: 'ok' | 'danger';
+}) {
+  const t = useTheme();
+  const head = (
+    <>
+      <View style={[styles.jobIcon, { backgroundColor: t[colour] }]}>
+        <Icon name={icon} size={24} color={onTool(colour, t)} />
+      </View>
+      <View style={{ flex: 1 }}>
+        <Text style={[type.title3, { color: t.text }]}>{title}</Text>
+        {status ? <Text style={[type.sub, { color: statusTone === 'danger' ? t.danger : statusTone === 'ok' ? t.ok : t.muted, marginTop: 2 }, statusTone && { fontWeight: '600' }]}>{status}</Text> : null}
+      </View>
+      {onPress ? <Icon name="chevron-right" size={13} color={t.faint} /> : null}
+    </>
+  );
+  const top = onPress ? (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={[title, status].filter(Boolean).join('. ')}
+      onPress={() => {
+        tap();
+        onPress();
+      }}
+      style={({ pressed }) => [styles.jobHead, { opacity: pressed ? 0.7 : 1, transform: [{ scale: pressed ? 0.985 : 1 }] }]}
+    >
+      {head}
+    </Pressable>
+  ) : (
+    <View style={styles.jobHead} accessible accessibilityRole="header" accessibilityLabel={[title, status].filter(Boolean).join('. ')}>
+      {head}
+    </View>
+  );
+  const body = (
+    <>
+      {top}
+      {children}
+    </>
+  );
+  if (tone && tone !== 'plain') {
+    return (
+      <GlowCard tone={tone} style={{ ...styles.job, ...style }}>
+        {body}
+      </GlowCard>
+    );
+  }
+  return <View style={[styles.job, { backgroundColor: t.surface }, style]}>{body}</View>;
 }
 
 // A switch row: title and description with a switch at the right, on the
@@ -1506,6 +1583,9 @@ const styles = StyleSheet.create({
   rowRight: { alignSelf: 'stretch', justifyContent: 'center', paddingLeft: space.sm, paddingRight: space.lg },
   rowMain: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: space.sm, alignSelf: 'stretch', minHeight: 50, paddingRight: space.lg, marginLeft: 0 },
   rowIcon: { width: 30, height: 30, borderRadius: 7, alignItems: 'center', justifyContent: 'center', marginRight: space.md },
+  job: { borderRadius: radius.lg, padding: space.lg, marginBottom: space.md },
+  jobHead: { flexDirection: 'row', alignItems: 'center', gap: space.md, minHeight: 56 },
+  jobIcon: { width: 44, height: 44, borderRadius: radius.md, alignItems: 'center', justifyContent: 'center' },
   notice: { flexDirection: 'row', gap: space.sm, alignItems: 'flex-start', borderRadius: radius.md, padding: space.md, marginBottom: space.lg },
   search: { flexDirection: 'row', alignItems: 'center', gap: 6, borderRadius: radius.field, borderWidth: 1, paddingHorizontal: 8, minHeight: 44 },
   scrim: { flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', justifyContent: 'flex-end', paddingHorizontal: space.sm },

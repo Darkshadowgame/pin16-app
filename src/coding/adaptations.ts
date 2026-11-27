@@ -2,7 +2,9 @@
 // each a number a module keeps. Rows are from replica/vag-tweaks.md, section
 // "SEAT Leon II 1P1 Cupra 2007 (PQ35)", type adaptation, confidence High, and
 // only rows that give a channel number and a range or named values. Ranges and
-// meanings are copied from that file. Left out on purpose: remote key matching
+// meanings are copied from that file. Rows for 09 channels 4, 7 and 8 and the
+// cluster channels 3 and 4 were added on 27 Nov 2026 from the Ross-Tech wiki pages
+// (replica/leon-mods-2026-11-27.md). Left out on purpose: remote key matching
 // or clearing (comfort channels 0 and 1), the alarm horn pattern, load
 // management, service interval channels, and anything the file marks RISK.
 // The step is the file's where it gives one, otherwise 1.
@@ -34,6 +36,7 @@ export interface AdaptationItem {
 }
 
 const CENTRAL = { label: 'Ross-Tech wiki: SEAT Leon (1P) central electronics', url: 'https://wiki.ross-tech.com/wiki/index.php/Seat_Leon_(1P)_Central_Electronics' };
+const CLUSTER = { label: 'Ross-Tech wiki: SEAT Leon (1P) instrument cluster', url: 'https://wiki.ross-tech.com/wiki/index.php/Seat_Leon_(1P)_Instrument_Cluster' };
 const COMFORT = { label: 'Ross-Tech wiki: VW Golf (1K) comfort system (linked from the Leon 1P page)', url: 'https://wiki.ross-tech.com/wiki/index.php/VW_Golf_(1K)_Comfort_System' };
 const ON_OFF: AdaptationChoice[] = [
   { value: 0, label: 'Off' },
@@ -61,7 +64,30 @@ export const ADAPTATIONS: AdaptationItem[] = [
   row({ module: 'vag-09', channel: 1, title: 'Coming home time', summary: 'The coming home duration, 10 to 60 seconds in steps of 10.', needs: 'Needs byte 0 bit 7 of the coding.', unit: 's', min: 10, max: 60, step: 10, sources: [CENTRAL] }),
   row({ module: 'vag-09', channel: 2, title: 'Leaving home time', summary: 'The leaving home duration, 10 to 60 seconds in steps of 10.', needs: 'Needs byte 0 bit 5 of the coding.', unit: 's', min: 10, max: 60, step: 10, sources: [CENTRAL] }),
   row({ module: 'vag-09', channel: 3, title: 'Heated rear window and mirror run time', summary: 'The run time of the heated rear window and mirror, 1 to 254 minutes.', unit: 'min', min: 1, max: 254, step: 1, sources: [CENTRAL] }),
+  row({ module: 'vag-09', channel: 4, title: 'Headlight washer run time', summary: 'The run time of the headlight washers, 50 to 10000 milliseconds in steps of 50.', needs: 'Needs byte 1 bit 1 of the coding (headlight washers fitted).', unit: 'ms', min: 50, max: 10000, step: 50, sources: [CENTRAL] }),
   row({ module: 'vag-09', channel: 5, title: 'Footwell light dimming', summary: 'The footwell light dimming, 20 to 100 percent.', needs: 'Sources disagree on which coding bit it needs: Ross-Tech says byte 0 bit 1, label dumps say byte 0 bit 2 (Footwell Lights installed). Check the Long Coding Helper label.', unit: '%', min: 20, max: 100, step: 1, sources: [CENTRAL] }),
+  row({ module: 'vag-09', channel: 7, title: 'High beam with the automatic headlights', summary: 'Lets the high beam work with the automatic headlight function, on or off.', choices: ON_OFF, sources: [CENTRAL] }),
+  row({ module: 'vag-09', channel: 8, title: 'Automatic headlight delay', summary: 'The delay before the automatic headlights switch on or off, 0 to 10200 milliseconds in steps of 40.', unit: 'ms', min: 0, max: 10200, step: 40, sources: [CENTRAL] }),
+  row({ module: 'vag-17', channel: 3, title: 'Fuel consumption display correction', summary: 'Scales the consumption shown in the cluster, 85 to 115 percent. 100 is the standard.', unit: '%', min: 85, max: 115, step: 1, sources: [CLUSTER] }),
+  row({
+    module: 'vag-17',
+    channel: 4,
+    title: 'Cluster language',
+    summary: 'The language of the cluster messages.',
+    min: 1,
+    max: 8,
+    choices: [
+      { value: 1, label: 'German' },
+      { value: 2, label: 'English' },
+      { value: 3, label: 'French' },
+      { value: 4, label: 'Italian' },
+      { value: 5, label: 'Spanish' },
+      { value: 6, label: 'Portuguese' },
+      { value: 7, label: 'No text' },
+      { value: 8, label: 'Czech' },
+    ],
+    sources: [CLUSTER],
+  }),
   row({ module: 'vag-46', channel: 3, title: 'Selective unlock', summary: 'Selective unlock, on or off.', choices: ON_OFF, sources: [COMFORT] }),
   row({ module: 'vag-46', channel: 4, title: 'Auto lock at 15 km/h', summary: 'Auto lock at 15 km/h, on or off.', choices: ON_OFF, sources: [COMFORT] }),
   row({ module: 'vag-46', channel: 5, title: 'Auto unlock when key removed', summary: 'Auto unlock when the key is removed, on or off.', choices: ON_OFF, sources: [COMFORT] }),
@@ -133,6 +159,25 @@ export function clampToRow(a: Pick<AdaptationItem, 'min' | 'max' | 'step'>, valu
   if (!Number.isInteger(value) || value < 0 || value > 0xffff) return null;
   const onGrid = a.min + Math.round((value - a.min) / a.step) * a.step;
   return Math.min(a.max, Math.max(a.min, onGrid));
+}
+
+// A row with too many values for a list opens a typed field instead.
+export function isWideRow(a: Pick<AdaptationItem, 'min' | 'max' | 'step' | 'choices'>): boolean {
+  return !a.choices && (a.max - a.min) / a.step > 12;
+}
+
+// A typed value checked against the row's own min, max and step. Only a whole
+// number inside the range and on the step grid passes; nothing else is sent.
+export function typedValueCheck(a: Pick<AdaptationItem, 'min' | 'max' | 'step' | 'unit'>, text: string): { ok: true; value: number } | { ok: false; text: string } {
+  const range = `${a.min} to ${a.max}${a.unit ? ` ${a.unit}` : ''}${a.step > 1 ? `, in steps of ${a.step}` : ''}`;
+  if (!/^[0-9]+$/.test(text.trim())) return { ok: false, text: `Type a whole number from ${range}.` };
+  const n = Number(text.trim());
+  if (n < a.min || n > a.max) return { ok: false, text: `${n} is outside ${range}.` };
+  if ((n - a.min) % a.step !== 0) {
+    const near = clampToRow(a, n);
+    return { ok: false, text: `${n} is not on the steps of ${a.step}. The nearest value is ${near}.` };
+  }
+  return { ok: true, value: n };
 }
 
 // The line under the row after a save.

@@ -1,12 +1,14 @@
 import { router, useLocalSearchParams } from 'expo-router';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Linking, Pressable, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Linking, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { PinMark } from '../../brand/PinMark';
 import { LinkLost } from '../../obd/transport';
-import { AdaptationItem, adaptationKey, adaptationResultText, adaptationsFor, canStep, clampToRow, formatAdaptation, inRange, isAdaptationKey, itemForKey, stepValue, valueFromHex, valueHex } from '../../coding/adaptations';
-import { CodingItem, codingItemsFor, fitsStyle, isOn, placeLabel, stateText, withItem } from '../../coding/items';
-import { LearnedSetting, learnedIsOn, learnedKeys, learnedModules, learnedReady, splitKey, withLearned } from '../../coding/learn';
-import { settingKey, sharedFits, sharedLearned } from '../../coding/shared';
+import { AdaptationItem, adaptationKey, adaptationResultText, adaptationsFor, formatAdaptation, inRange, isAdaptationKey, isWideRow, itemForKey, typedValueCheck, valueFromHex, valueHex } from '../../coding/adaptations';
+import { CodingItem, codingItemsFor, FitContext, isOn, itemApplies, placeLabel, stateText, whyNotOffered, withItem } from '../../coding/items';
+import { offeredSettings } from '../../coding/offered';
+import { dedupeItems, groupByCategory, isUnconfirmed, SETTING_CATEGORIES, SettingCategory, settingCategory } from '../../coding/categories';
+import { fromHex, LearnedSetting, learnedIsOn, learnedKeys, learnedModules, splitKey, withLearned } from '../../coding/learn';
+import { modulePart, settingKey, sharedLearned } from '../../coding/shared';
 import { addDiary, SETTING_CHANGED, today } from '../../diary';
 import { addHistory } from '../../history';
 import { kbForCar, kbSettings, loadKb } from '../../kb';
@@ -20,7 +22,8 @@ import { CodingHistory } from '../../coding/history';
 import { loadCodingHistory, onCodingHistory, recordCodings } from '../../coding/historyStore';
 import { useConnection } from '../../state';
 import { space, type, useTheme } from '../../theme';
-import { TOOLS, announce, announceResult, liveRegion, Chips, ConfirmSheet, Field, GlowCard, Group, Icon, ListRow, NeedsConnection, Notice, Pill, Screen, Stepper, success, Toggle, tool } from '../../ui';
+import { TOOLS, announce, announceResult, liveRegion, Button, Chips, ConfirmSheet, Field, GlowCard, Group, Icon, ListRow, NeedsConnection, Notice, Pill, Screen, SearchField, SheetPage, success, Toggle, tool } from '../../ui';
+import { SettingRow } from '../../components/SettingRow';
 import { TryResult, useGarage, vehicleTitle } from '../../vehicle/garage';
 import { SECTIONS } from '../../help';
 import { sendLogNow } from '../../share/sendLog';
@@ -49,7 +52,14 @@ type Pending =
 
 // Shown beside the spinner while a change is written to the car.
 const WRITING = 'Writing. Keep this page open.';
-// Where the result of a put back from Backups shows: beside Backups.
+// The filter chip for settings that differ from the original.
+const CHANGED = 'changed';
+// One setting in the list: a switch (coding), an adjustable value, or a learned switch.
+type Entry =
+  | { kind: 'item'; id: string; title: string; cat: SettingCategory; changed: boolean; item: CodingItem }
+  | { kind: 'adapt'; id: string; title: string; cat: SettingCategory; changed: boolean; a: AdaptationItem }
+  | { kind: 'learned'; id: string; title: string; cat: SettingCategory; changed: boolean; s: LearnedSetting; borrowed: boolean };
+// Where the result of a put back from Put back original shows: beside it.
 const RESTORE_MSG = 'restore';
 const ORIGINAL_NOT_SAVED = 'Pin16 could not save the original on this phone, so nothing was changed in the car. Free some space on the phone, then try again.';
 
@@ -76,9 +86,7 @@ export default function Customise() {
   }, [v?.vin, v?.platform]);
   // Sourced settings for this platform.
   const items = v
-    ? codingItemsFor(v.group, v.platform).filter(
-        (i, k, all) => all.findIndex((x) => x.module === i.module && x.byte === i.byte && x.bits.join() === i.bits.join()) === k,
-      )
+    ? dedupeItems(codingItemsFor(v.group, v.platform))
     : [];
   // Knowledge base notes not already a sourced setting.
   const kbNotes = kbItems.filter((n) => !items.some((i) => i.module === n.module && i.byte === n.byte && i.bits.join() === n.bits.join()));
@@ -106,8 +114,13 @@ export default function Customise() {
   const [reading, setReading] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [pending, setPending] = useState<Pending>(null);
-  // Category chip in view (null: all) and the setting whose details are open.
+  // Filter chip in view (null: all, CHANGED, or a category), the search words,
+  // the panel opened from the top (put back original or coding history), the
+  // adjustable value whose picker is open, and the setting whose details are open.
   const [cat, setCat] = useState<string | null>(null);
+  const [query, setQuery] = useState('');
+  const [panel, setPanel] = useState<'backups' | 'history' | null>(() => (wantRestore || wantAdaptRestore ? 'backups' : null));
+  const [pickKey, setPickKey] = useState<string | null>(null);
   const [openId, setOpenId] = useState<string | null>(null);
   // The setting whose Technical details (source notes, byte, bits) are open.
   const [techId, setTechId] = useState<string | null>(null);
@@ -246,25 +259,22 @@ export default function Customise() {
     const o = originals[key];
     return a && o ? `Puts ${a.title} back to ${formatAdaptation(a, valueFromHex(o))}, the value it had before Pin16 first changed it.` : 'Puts the value back to what it was before Pin16 first changed it.';
   };
-  const ready = (i: CodingItem) => {
-    const c = codings[i.module];
-    if (reading && !checked.has(i.module) && !c) return false;
-    if (!c) return false;
-    // Short items only on short-coded modules, byte and bit items only on the others.
-    const def = defOf(i.module);
-    if (def && !fitsStyle(i, client?.codingStyle(def))) return false;
-    if (i.short) return c.length === 3;
-    // Offered whenever the coding holds the byte. A coding longer or shorter
-    // than the source car's is noted under Technical, not hidden.
-    return c.length > i.byte;
+  // What the shared fit rule needs to know about a module (src/coding/items.ts).
+  const fitOf = (moduleId: string): FitContext => {
+    const def = defOf(moduleId);
+    return { style: def ? client?.codingStyle(def) : undefined, part: modulePart(v, moduleId) };
   };
-  const available = items.filter(ready);
-  const unreachable = items.filter((i) => !reading && checked.has(i.module) && !ready(i));
+  // The settings this car is offered, from the same function the Car tab counts with.
+  const tried = v.tried ?? {};
+  const offered = offeredSettings({ group: v.group, platform: v.platform, codings, ctxOf: fitOf, adaptValues, learned, borrowed, tried });
+  const available = offered.items;
+  // Only a module that gave no coding leaves its settings unreachable; a setting that
+  // does not fit the coding the module gave is not listed.
+  const unreachable = items.filter((i) => !reading && checked.has(i.module) && !codings[i.module]);
   const restorable = moduleIds.filter((id) => originals[id] && codings[id] && toHex(codings[id]!) !== originals[id]);
 
   // Checks every change must pass before Pin16 writes anything.
   const preflight = () => preflightCheck(client);
-  const tried = v.tried ?? {};
   const mark = (id: string, r: TryResult) => garage.update(v.vin, { tried: { ...(garage.latest(v.vin)?.tried ?? {}), [id]: r } });
 
   const run = async (p: Exclude<Pending, null>) => {
@@ -277,7 +287,7 @@ export default function Customise() {
       return;
     }
     // The result shows under the switch that was used; a put back shows beside
-    // Backups, or at the top when it was opened from the change timeline.
+    // Put back original, or at the top when it was opened from the change timeline.
     let runId = p.kind === 'item' ? p.item.id : p.kind === 'restore' ? (p.top ? undefined : RESTORE_MSG) : p.setting.id;
     if (p.kind === 'forget') {
       await garage.update(v.vin, { learned: learned.filter((s) => s.id !== p.setting.id) });
@@ -285,6 +295,14 @@ export default function Customise() {
     }
     const ids = p.kind === 'item' ? [p.item.module] : p.kind === 'learned' ? learnedKeys(p.setting) : [p.module];
     if (ids.some((id) => !codings[id])) return;
+    // The write itself checks the setting fits the coding read from the car, even if a screen offered it.
+    if (p.kind === 'item') {
+      const why = whyNotOffered(p.item, codings[p.item.module], fitOf(p.item.module));
+      if (why) {
+        if (alive.current) setMessage({ id: runId, tone: 'danger', text: `${p.item.title} was not changed. ${why} Nothing was written to the car.` });
+        return;
+      }
+    }
     setBusy(p.kind === 'item' ? p.item.id : p.kind === 'learned' ? p.setting.id : p.top ? `restore-top-${p.module}` : `restore-${p.module}`);
     setMessage(null);
     try {
@@ -329,6 +347,11 @@ export default function Customise() {
             : p.kind === 'learned'
               ? withLearned(p.setting, moduleId, before, p.on)
               : (originals[moduleId] ?? toHex(before)).match(/../g)!.map((h) => parseInt(h, 16));
+        // A put back must be the same length as what the module holds now.
+        if (p.kind === 'restore' && after.length !== before.length) {
+          failed = `${def.name} now holds ${before.length} bytes, and the original is ${after.length} bytes, so it was not put back. Nothing was written to the car.`;
+          break;
+        }
         const login = p.kind === 'learned' ? p.setting.login : p.kind === 'item' ? p.item.login : undefined;
         let res: Awaited<ReturnType<typeof client.writeCoding>>;
         try {
@@ -357,7 +380,7 @@ export default function Customise() {
           if (res.coding && toHex(res.coding) !== toHex(before)) done.push({ key: moduleId, before, after: res.coding });
           failed = res.restored
             ? `${def.name} did not keep the change, so Pin16 put its original coding back.${notes.length ? ' Modules changed before it keep the new setting; switch it off again to undo them.' : ' Nothing has changed.'}${lowBattery}`
-            : `${def.name} did not keep the change, and Pin16 could not confirm the original is back. With the ignition on, Tap Put back under Backups in Customise.${lowBattery}`;
+            : `${def.name} did not keep the change, and Pin16 could not confirm the original is back. With the ignition on, tap Put back original in Customise.${lowBattery}`;
           break;
         }
         notes.push(`${def.name} ${did ? `value ${did}` : 'coding'} ${toHex(before)} to ${toHex(after)}`);
@@ -375,7 +398,7 @@ export default function Customise() {
         date: today(),
         kind: SETTING_CHANGED,
         mileage: null,
-        notes: failed ? `Part changed: ${what}. ${notes.join('; ') || 'A module did not keep the change'}. Check it in Customise.` : p.kind === 'restore' ? `${what}.` : `Changed: ${what}. Put it back in Customise, then Backups.`,
+        notes: failed ? `Part changed: ${what}. ${notes.join('; ') || 'A module did not keep the change'}. Check it in Customise.` : p.kind === 'restore' ? `${what}.` : `Changed: ${what}. Put it back in Customise, with Put back original.`,
       });
       // One line per module for the change timeline, with the backup each came from.
       const setting = p.kind === 'item' ? p.item.title : p.kind === 'learned' ? p.setting.title : 'Put back original';
@@ -450,6 +473,16 @@ export default function Customise() {
       const saved = garage.latest(v.vin)?.codingOriginal ?? {};
       const fresh = Object.entries(out).filter(([k, val]) => val != null && !saved[k]);
       if (fresh.length) await garage.update(v.vin, { codingOriginal: { ...saved, ...Object.fromEntries(fresh.map(([k, val]) => [k, valueHex(val!)])) } });
+      // The values read are kept with the codings, so the Car tab counts the same rows as this list.
+      // A channel the module did not have is dropped.
+      if (!lost && Object.keys(out).length) {
+        const kept = { ...(garage.latest(v.vin)?.codingCache ?? {}) };
+        for (const [k, val] of Object.entries(out)) {
+          if (val == null) delete kept[k];
+          else kept[k] = valueHex(val);
+        }
+        await garage.update(v.vin, { codingCache: kept });
+      }
     } finally {
       adaptRunning.current = false;
       if (alive.current) {
@@ -532,19 +565,15 @@ export default function Customise() {
     }
   };
   const adaptLocked = !!busy || !!adaptBusy || !!adaptReading;
-  const adaptModules = [...new Set(adaptItems.map((a) => a.module))].filter((m) => adaptItems.some((a) => a.module === m && typeof adaptValues[adaptationKey(a)] === 'number'));
+  const adaptModules = [...new Set(offered.adapts.map((a) => a.module))];
 
   const mods = modsForVehicle(v.group, v.platform);
   const cats = categoriesFor(mods);
   // Modules with settings (a module with adaptation values counts once).
   const modulesWithSettings = new Set(moduleIds.map((k) => splitKey(k).module)).size;
   const checkedModules = new Set([...checked].map((k) => splitKey(k).module).filter((m) => moduleIds.every((k) => splitKey(k).module !== m || checked.has(k)))).size;
-  const confirmed = available.filter((i) => i.confidence !== 'low');
-  const unconfirmed = available.filter((i) => i.confidence === 'low');
-  const groups = [...new Set(confirmed.map((i) => i.category))];
-  const learnedReadyList = learned.filter((s) => learnedReady(s, codings));
-  const borrowedFit = borrowed.filter((s) => tried[s.id] !== 'no-effect' && tried[s.id] !== 'refused' && sharedFits(s, codings));
-  const learnedWaiting = learned.filter((s) => !reading && !learnedReady(s, codings));
+  const learnedReadyList = offered.learned;
+  const borrowedFit = offered.borrowed;
 
   // Which cars have built-in switches, said plainly on a car that has none.
   const noSwitches =
@@ -567,6 +596,214 @@ export default function Customise() {
       <ListRow icon="refresh" iconColour={TOOLS.customise.colour} title="Read settings again" subtitle="Settings are kept while connected; this reads them fresh" disabled={reading} onPress={() => read(true)} />
     </Group>
   );
+
+  // ---- The list: every setting this car has, one row each, under its category ----
+  const q = query.trim().toLowerCase();
+  // The coding each module had before Pin16 first changed it, to see what differs now.
+  const origValues: Record<string, number[] | null> = Object.fromEntries(Object.keys(originals).filter((k) => !isAdaptationKey(k)).map((k) => [k, fromHex(originals[k])]));
+  const entries: Entry[] = [
+    ...available.map(
+      (i): Entry => ({ kind: 'item', id: i.id, title: i.title, cat: settingCategory(i), changed: !!origValues[i.module] && itemApplies(i, origValues[i.module], fitOf(i.module)) && isOn(i, origValues[i.module]!) !== isOn(i, codings[i.module]!), item: i }),
+    ),
+    ...offered.adapts.map((a): Entry => {
+      const o = originals[adaptationKey(a)];
+      return { kind: 'adapt', id: adaptationKey(a), title: a.title, cat: settingCategory(a), changed: !!o && valueFromHex(o) !== adaptValues[adaptationKey(a)], a };
+    }),
+    ...learnedReadyList.map((s): Entry => ({ kind: 'learned', id: s.id, title: s.title, cat: settingCategory(s), changed: learnedKeys(s).every((k) => origValues[k]) && learnedIsOn(s, origValues) !== learnedIsOn(s, codings), s, borrowed: false })),
+    ...borrowedFit.map((s): Entry => ({ kind: 'learned', id: s.id, title: s.title, cat: settingCategory(s), changed: false, s, borrowed: true })),
+  ];
+  const changedCount = entries.filter((e) => e.changed).length;
+  const visible = entries.filter((e) => (!q || e.title.toLowerCase().includes(q)) && (cat === null || (cat === CHANGED ? e.changed : e.cat === cat)));
+  const sections = groupByCategory(visible, (e) => e.cat);
+  const showExtras = !cat && !q;
+  const anyUnconfirmed = visible.some((e) => e.kind === 'item' && isUnconfirmed(e.item));
+
+  const tagRow = (pills: React.ReactNode[]) => (pills.some(Boolean) ? <View style={styles.tags}>{pills}</View> : null);
+  const messageLine = (id: string) => (message?.id === id ? <Text accessibilityLiveRegion={liveRegion} style={[type.small, { color: message.tone === 'ok' ? t.ok : t.danger, marginTop: 4 }]}>{message.text}</Text> : null);
+  const writingLine = (on: boolean) => (on ? <Text style={[type.small, { color: t.muted, marginTop: 4 }]}>{WRITING}</Text> : null);
+  const spinner = <ActivityIndicator color={t.accentText} accessibilityLabel="Writing" />;
+
+  const renderItem = (i: CodingItem, first: boolean) => {
+    const on = isOn(i, codings[i.module]!);
+    const working = busy === i.id;
+    const open = openId === i.id;
+    return (
+      <SettingRow
+        key={i.id}
+        first={first}
+        title={i.title}
+        value={on ? 'On' : 'Off'}
+        hint={stateText(i, on)}
+        expanded={open}
+        onTitlePress={() => setOpenId(open ? null : i.id)}
+        tags={tagRow([isUnconfirmed(i) ? <Pill key="u" text="Unconfirmed" /> : null, i.confidence === 'medium' ? <Pill key="m" text="Reported by owners" /> : null, tried[i.id] ? <TriedPill key="t" r={tried[i.id]} /> : null])}
+        control={working ? spinner : <Toggle value={on} disabled={!!busy || !checked.has(i.module)} label={i.title} onChange={(next) => run({ kind: 'item', item: i, on: next })} />}
+      >
+        {open ? (
+          <>
+            <Text style={[type.sub, { color: t.muted, marginTop: 2 }]}>{stateText(i, on)}</Text>
+            <Pressable accessibilityRole="button" accessibilityState={{ expanded: techId === i.id }} hitSlop={6} onPress={() => setTechId(techId === i.id ? null : i.id)} style={styles.link}>
+              <Text style={[type.small, { color: t.accentText }]}>{techId === i.id ? 'Hide technical' : 'Technical'}</Text>
+            </Pressable>
+            {techId === i.id ? (
+              <>
+                {i.note ? <Text style={[type.small, { color: t.muted }]}>{i.note}</Text> : null}
+                <Text style={[type.small, { color: t.muted, marginTop: 4 }]}>
+                  {defOf(i.module)?.name ?? i.module}, {placeLabel(i)}
+                  {i.length && codings[i.module] && codings[i.module]!.length !== i.length ? `. The source car’s coding is ${i.length} bytes; yours is ${codings[i.module]!.length}, so check the result in the car.` : ''}
+                </Text>
+                <Pressable accessibilityRole={i.sources[0].url ? 'link' : 'text'} disabled={!i.sources[0].url} hitSlop={6} onPress={() => i.sources[0].url && Linking.openURL(i.sources[0].url)} style={styles.link}>
+                  <Text style={[type.small, { color: i.sources[0].url ? t.accentText : t.muted }]}>Source: {i.sources[0].label}</Text>
+                </Pressable>
+              </>
+            ) : null}
+          </>
+        ) : null}
+        {messageLine(i.id)}
+        {writingLine(working)}
+      </SettingRow>
+    );
+  };
+
+  const renderLearned = (s: LearnedSetting, borrowedFrom: boolean, first: boolean) => {
+    const on = learnedIsOn(s, codings);
+    const working = busy === s.id;
+    const open = openId === s.id;
+    const where = learnedModules(s)
+      .map((id) => defOf(id)?.name ?? id)
+      .join(', ');
+    const from = borrowed.find((x) => x.id === s.id);
+    return (
+      <SettingRow
+        key={s.id}
+        first={first}
+        title={s.title}
+        value={on ? 'On' : 'Off'}
+        hint={where}
+        expanded={open}
+        onTitlePress={() => setOpenId(open ? null : s.id)}
+        tags={tagRow([borrowedFrom && !tried[s.id] ? <Pill key="b" text="Try it" tone="accent" /> : null, tried[s.id] ? <TriedPill key="t" r={tried[s.id]} /> : null, !borrowedFrom ? <Pill key="l" text="Learned on this car" /> : null])}
+        control={working ? spinner : <Toggle value={on} disabled={!!busy || learnedKeys(s).some((k) => !checked.has(k))} label={s.title} onChange={(next) => run({ kind: 'learned', setting: s, on: next })} />}
+      >
+        {open ? (
+          <>
+            <Text style={[type.sub, { color: t.muted, marginTop: 2 }]}>
+              {where}
+              {borrowedFrom && from ? ` · from your ${from.from}${from.tier === 2 ? ' (same part, another revision)' : ''}` : ''}
+            </Text>
+            {!borrowedFrom ? (
+              <Pressable accessibilityRole="button" hitSlop={6} disabled={!!busy} onPress={() => setPending({ kind: 'forget', setting: s })} style={styles.link}>
+                <Text style={[type.small, { color: t.accentText }]}>Forget</Text>
+              </Pressable>
+            ) : null}
+          </>
+        ) : null}
+        {messageLine(s.id)}
+        {writingLine(working)}
+      </SettingRow>
+    );
+  };
+
+  // The detail lines of an adjustable value: what it does, where it lives, its source, and the way back.
+  const adaptDetails = (a: AdaptationItem, cur: number) => {
+    const key = adaptationKey(a);
+    const orig = v.codingOriginal?.[key];
+    const origValue = orig ? valueFromHex(orig) : null;
+    return (
+      <>
+        <Text style={[type.sub, { color: t.muted }]}>{a.summary}</Text>
+        <Text style={[type.small, { color: t.muted, marginTop: 4 }]}>
+          {defOf(a.module)?.name ?? a.module}, adaptation channel {a.channel}. {a.choices ? '' : `${a.min} to ${a.max}${a.unit ? ` ${a.unit}` : ''}, steps of ${a.step}.`}
+        </Text>
+        {a.needs ? <Text style={[type.small, { color: t.muted, marginTop: 4 }]}>{a.needs}</Text> : null}
+        <Pressable accessibilityRole="link" hitSlop={6} onPress={() => Linking.openURL(a.sources[0].url)} style={styles.link}>
+          <Text style={[type.small, { color: t.accentText }]}>Source: {a.sources[0].label}</Text>
+        </Pressable>
+        {origValue != null && origValue !== cur ? (
+          <Pressable
+            accessibilityRole="button"
+            hitSlop={6}
+            disabled={adaptLocked}
+            onPress={() => {
+              setPickKey(null);
+              void changeAdaptRef.current?.(a, origValue, { putBack: true });
+            }}
+            style={styles.link}
+          >
+            <Text style={[type.small, { color: t.accentText }]}>Put back original ({formatAdaptation(a, origValue)})</Text>
+          </Pressable>
+        ) : null}
+      </>
+    );
+  };
+
+  const renderAdapt = (a: AdaptationItem, first: boolean) => {
+    const key = adaptationKey(a);
+    const cur = adaptValues[key] as number;
+    const working = adaptBusy === key;
+    const msg = adaptMsg[key];
+    const open = adaptOpen === key;
+    // On and Off only: a switch, like any 2-state setting. Everything else opens a picker.
+    const twoState = !!a.choices && a.choices.length === 2 && a.choices[0].value === 0 && a.choices[0].label === 'Off' && a.choices[1].value === 1 && a.choices[1].label === 'On';
+    const tags = tagRow([inRange(a, cur) ? null : <Pill key="r" text="Outside the usual range" />]);
+    const lines = (
+      <>
+        {open && twoState ? adaptDetails(a, cur) : null}
+        {working ? <Text style={[type.small, { color: t.muted, marginTop: 4 }]}>{WRITING}</Text> : null}
+        {msg?.text ? <Text accessibilityLiveRegion={liveRegion} style={[type.small, { color: msg.ok ? t.ok : t.danger, marginTop: 4 }]}>{msg.text}</Text> : null}
+      </>
+    );
+    if (twoState) {
+      return (
+        <SettingRow
+          key={key}
+          first={first}
+          title={a.title}
+          value={formatAdaptation(a, cur)}
+          hint={a.summary}
+          expanded={open}
+          onTitlePress={() => setAdaptOpen(open ? null : key)}
+          tags={tags}
+          control={working ? spinner : <Toggle value={cur === 1} disabled={adaptLocked} label={a.title} onChange={(next) => void changeAdaptRef.current?.(a, next ? 1 : 0)} />}
+        >
+          {lines}
+        </SettingRow>
+      );
+    }
+    return (
+      <SettingRow key={key} first={first} title={a.title} value={formatAdaptation(a, cur)} hint={`${a.summary} ${isWideRow(a) ? 'Opens a field to type a value.' : 'Opens a list of values.'}`} disabled={adaptLocked} onPress={() => setPickKey(key)} tags={tags}>
+        {lines}
+      </SettingRow>
+    );
+  };
+
+  const renderEntry = (e: Entry, first: boolean) => (e.kind === 'item' ? renderItem(e.item, first) : e.kind === 'adapt' ? renderAdapt(e.a, first) : renderLearned(e.s, e.borrowed, first));
+
+  // The picker of a multi-value setting: a choice writes at once and closes the sheet.
+  const pickA = pickKey ? adaptItems.find((a) => adaptationKey(a) === pickKey) : undefined;
+  const pickCur = pickA ? adaptValues[adaptationKey(pickA)] : undefined;
+  const pickWide = !!pickA && isWideRow(pickA);
+  const pickOptions = pickA ? (pickA.choices ?? (pickWide ? [] : Array.from({ length: Math.round((pickA.max - pickA.min) / pickA.step) + 1 }, (_, n) => ({ value: pickA.min + n * pickA.step, label: formatAdaptation(pickA, pickA.min + n * pickA.step) })))) : [];
+  const applyTyped = (a: AdaptationItem, text: string, cur: number) => {
+    const key = adaptationKey(a);
+    setDrafts((d) => {
+      const { [key]: _gone, ...rest } = d;
+      return rest;
+    });
+    if (!text.trim()) {
+      setPickKey(null);
+      return;
+    }
+    // Checked against this row's own min, max and step; nothing is sent for anything else.
+    const check = typedValueCheck(a, text.trim());
+    if (!check.ok) {
+      setAdaptMsg((m) => ({ ...m, [key]: { ok: false, text: `${check.text} Nothing was sent.` } }));
+      return;
+    }
+    const x = check.value;
+    setPickKey(null);
+    if (x !== cur) void changeAdaptRef.current?.(a, x);
+  };
 
   return (
     <Screen>
@@ -600,6 +837,81 @@ export default function Customise() {
         </>
       ) : null}
 
+      {entries.length ? (
+        <>
+          <View style={{ marginBottom: space.md }}>
+            <SearchField value={query} onChange={setQuery} placeholder="Search settings" caps={false} />
+          </View>
+          {/* Counts show once every module has answered, so they do not jump. */}
+          <Chips
+            scroll
+            options={[
+              { id: '', label: 'All', count: reading ? undefined : entries.length },
+              { id: CHANGED, label: 'Changed from original', count: reading ? undefined : changedCount },
+              ...SETTING_CATEGORIES.filter((c) => entries.some((e) => e.cat === c)).map((c) => ({ id: c as string, label: c, count: reading ? undefined : entries.filter((e) => e.cat === c).length })),
+            ]}
+            value={cat ?? ''}
+            onPick={(id) => setCat(id || null)}
+          />
+        </>
+      ) : null}
+
+      {items.length || learned.length || Object.keys(originals).length ? (
+        <View style={styles.actions}>
+          <Button label="Put back original" icon="restart" variant="secondary" compact style={{ flex: 1 }} onPress={() => setPanel(panel === 'backups' ? null : 'backups')} accessibilityLabel={panel === 'backups' ? 'Hide put back original' : 'Put back original'} />
+          <Button label="Coding history" icon="history" variant="secondary" compact style={{ flex: 1 }} onPress={() => setPanel(panel === 'history' ? null : 'history')} accessibilityLabel={panel === 'history' ? 'Hide coding history' : 'Coding history'} />
+        </View>
+      ) : null}
+
+      {/* The result of a put back shows here, where it was tapped, and stays when the Put back original list empties. */}
+      {message?.id === RESTORE_MSG ? <Notice tone={message.tone} icon={message.tone === 'ok' ? 'check' : 'alert-circle-outline'} text={message.text} /> : null}
+
+      {panel === 'backups' ? (
+        restorable.length ? (
+          <Group header="Put back original" help={SECTIONS.customiseBackups} footer="The coding each module had before Pin16 first changed it.">
+            {restorable.map((id, i) => {
+              const did = splitKey(id).did;
+              return (
+                <ListRow
+                  key={id}
+                  first={i === 0}
+                  icon="restart"
+                  iconColour="grey"
+                  title={`Put back ${defOf(id)?.name ?? id} ${did ? 'setting' : 'coding'}`}
+                  subtitle={busy === `restore-${id}` ? WRITING : did ? `The original setting. Technical: ${did}` : 'The original coding'}
+                  disabled={!!busy || !checked.has(id)}
+                  onPress={() => setPending({ kind: 'restore', module: id })}
+                />
+              );
+            })}
+          </Group>
+        ) : (
+          <Notice icon="information-outline" text={reading ? 'Checking what each module holds now.' : 'Nothing to put back: every module holds the coding it had when Pin16 first read it.'} />
+        )
+      ) : null}
+
+      {panel === 'history' ? (
+        Object.values(codingHist).some((l) => l.length) ? (
+          <Group header="Coding history" help={SECTIONS.moduleCodingHistory} footer="Every coding read from or written to each module on this car. Tap one to see what changed and to put an earlier coding back.">
+            {Object.entries(codingHist)
+              .filter(([, l]) => l.length)
+              .map(([key, l], i) => (
+                <ListRow
+                  key={key}
+                  first={i === 0}
+                  icon="history"
+                  iconColour="grey"
+                  title={defOf(key)?.name ?? key}
+                  subtitle={`${l.length} coding${l.length === 1 ? '' : 's'} kept, latest ${stamp(l[0].at).date} ${stamp(l[0].at).time}`}
+                  onPress={() => router.push({ pathname: '/workshop/[id]', params: { id: key, tab: 'coding' } })}
+                />
+              ))}
+          </Group>
+        ) : (
+          <Notice icon="information-outline" text="No codings are kept yet. Each module's coding is saved when Pin16 reads or changes it." />
+        )
+      ) : null}
+
       {moduleIds.length && reading ? (
         <View style={styles.loading}>
           <ActivityIndicator color={t.muted} />
@@ -609,80 +921,34 @@ export default function Customise() {
         </View>
       ) : null}
 
-      {groups.length + (unconfirmed.length ? 1 : 0) + (learned.length ? 1 : 0) > 1 ? (
-        // Counts show once every module has answered, so they do not jump.
-        <Chips
-          scroll
-          options={[
-            { id: '', label: 'All', n: available.length + learnedReadyList.length },
-            ...groups.map((g) => ({ id: g, label: g, n: confirmed.filter((i) => i.category === g).length })),
-            ...(unconfirmed.length ? [{ id: 'Try these (not confirmed)', label: 'Try these', n: unconfirmed.length }] : []),
-            ...(learned.length ? [{ id: 'Learned', label: 'Learned', n: learnedReadyList.length }] : []),
-          ].map((c) => ({ id: c.id, label: c.label, count: reading ? undefined : c.n }))}
-          value={cat ?? ''}
-          onPick={(id) => setCat(id || null)}
-        />
+      {adaptReading ? (
+        <View style={styles.loading}>
+          <ActivityIndicator color={t.muted} />
+          <Text style={[type.sub, { color: t.muted, flex: 1 }]}>Reading adjustable values: {defOf(adaptReading)?.name ?? adaptReading}.</Text>
+        </View>
       ) : null}
 
-      {[...groups.map((g) => ({ g, list: confirmed.filter((i) => i.category === g) })), ...(unconfirmed.length ? [{ g: 'Try these (not confirmed)', list: unconfirmed }] : [])]
-        .filter(({ g }) => !cat || cat === g)
-        .map(({ g, list }, k) => (
-        <Group
-          key={g}
-          header={g}
-          help={g === 'Try these (not confirmed)' ? SECTIONS.customiseTry : k === 0 ? SECTIONS.customiseSettings : undefined}
-          footer={g === 'Try these (not confirmed)' ? 'One vague source each. Pin16 writes the change and checks the module kept it. Switch it back off if you see no effect.' : undefined}
-        >
-          {list
-            .map((i, n) => {
-              const on = isOn(i, codings[i.module]!);
-              const working = busy === i.id;
-              return (
-                <View key={i.id} style={[styles.item, { borderColor: t.border, borderTopWidth: n ? StyleSheet.hairlineWidth : 0 }]}>
-                  {/* The row is a plain container: the details toggle, Technical, Source and the switch are separate elements, so VoiceOver reaches each. */}
-                  <View style={{ flex: 1 }}>
-                    <Pressable accessibilityRole="button" accessibilityState={{ expanded: openId === i.id }} onPress={() => setOpenId(openId === i.id ? null : i.id)}>
-                      <Text style={[type.body, { color: t.text }]}>{i.title}</Text>
-                      {tried[i.id] || i.confidence === 'medium' ? (
-                        <View style={styles.badge}>{tried[i.id] ? <TriedPill r={tried[i.id]} /> : <Pill text="Reported by owners" />}</View>
-                      ) : null}
-                      {/* The whole description shows; it is never cut short. */}
-                      <Text style={[type.sub, { color: t.muted, marginTop: openId === i.id ? 2 : 1 }, openId !== i.id && type.small]}>{stateText(i, on)}</Text>
-                    </Pressable>
-                    {openId === i.id ? (
-                      <>
-                        <Pressable accessibilityRole="button" accessibilityState={{ expanded: techId === i.id }} hitSlop={6} onPress={() => setTechId(techId === i.id ? null : i.id)} style={styles.link}>
-                          <Text style={[type.small, { color: t.accentText }]}>{techId === i.id ? 'Hide technical' : 'Technical'}</Text>
-                        </Pressable>
-                        {techId === i.id ? (
-                          <>
-                            {i.note ? <Text style={[type.small, { color: t.muted }]}>{i.note}</Text> : null}
-                            <Text style={[type.small, { color: t.muted, marginTop: 4 }]}>
-                              {defOf(i.module)?.name ?? i.module}, {placeLabel(i)}
-                              {i.length && codings[i.module] && codings[i.module]!.length !== i.length ? `. The source car’s coding is ${i.length} bytes; yours is ${codings[i.module]!.length}, so check the result in the car.` : ''}
-                            </Text>
-                            <Pressable accessibilityRole={i.sources[0].url ? 'link' : 'text'} disabled={!i.sources[0].url} hitSlop={6} onPress={() => i.sources[0].url && Linking.openURL(i.sources[0].url)} style={styles.link}>
-                              <Text style={[type.small, { color: i.sources[0].url ? t.accentText : t.muted }]}>Source: {i.sources[0].label}</Text>
-                            </Pressable>
-                          </>
-                        ) : null}
-                      </>
-                    ) : null}
-                    {message?.id === i.id ? <Text accessibilityLiveRegion={liveRegion} style={[type.small, { color: message.tone === 'ok' ? t.ok : t.danger, marginTop: 4 }]}>{message.text}</Text> : null}
-                    {working ? <Text style={[type.small, { color: t.muted, marginTop: 4 }]}>{WRITING}</Text> : null}
-                  </View>
-                  {working ? (
-                    <ActivityIndicator color={t.accentText} accessibilityLabel="Writing" />
-                  ) : (
-                    <Toggle value={on} disabled={!!busy || !checked.has(i.module)} label={i.title} onChange={(next) => run({ kind: 'item', item: i, on: next })} />
-                  )}
-                </View>
-              );
-            })}
+      {sections.map(({ category, items: list }, k) => (
+        <Group key={category} header={category} help={k === 0 && showExtras ? SECTIONS.customiseSettings : undefined}>
+          {list.map((e, n) => renderEntry(e, n === 0))}
         </Group>
       ))}
 
-      {v.deepFound?.length && !cat ? (
+      {anyUnconfirmed ? <Text style={[type.small, { color: t.muted, marginHorizontal: space.lg, marginBottom: space.xl }]}>Unconfirmed: one vague source. Pin16 writes the change and checks the module kept it. Switch it back if you see no effect.</Text> : null}
+
+      {entries.length && !visible.length ? (
+        <Text style={[type.sub, { color: t.muted, marginHorizontal: space.lg, marginBottom: space.xl }]}>
+          {q ? `No setting matches “${query.trim()}”.` : cat === CHANGED ? 'Nothing on this car differs from the original.' : 'No settings in this category on this car.'}
+        </Text>
+      ) : null}
+
+      {showExtras && adaptDone && !adaptReading && adaptItems.length > 0 && !adaptModules.length ? (
+        <Text style={[type.sub, { color: t.muted, marginBottom: space.lg }]}>
+          No adjustable values read from {[...new Set(adaptItems.map((a) => defOf(a.module)?.name ?? a.module))].join(' or ')}.
+        </Text>
+      ) : null}
+
+      {v.deepFound?.length && showExtras ? (
         <Group
           header="Older VW modules on this car"
           footer="A switch shows only where a public source says which coding bit does what. For a module with none yet, open it to read and change its coding bit by bit, or run Learn my car below to look its settings up."
@@ -704,173 +970,9 @@ export default function Customise() {
         </Group>
       ) : null}
 
-      {borrowedFit.length && !cat ? (
-        <Group
-          header="From your other cars"
-          footer="Learned on another of your cars with the same module, and not yet tried on this one. Pin16 backs up, writes the change and checks the module kept it. A setting the module keeps moves to Learned from your car. Switch it back off if you see no effect."
-        >
-          {borrowedFit.map((s, n) => {
-            const on = learnedIsOn(s, codings);
-            const working = busy === s.id;
-            return (
-              <View key={s.id} style={[styles.item, { borderColor: t.border, borderTopWidth: n ? StyleSheet.hairlineWidth : 0 }]}>
-                <View style={{ flex: 1 }}>
-                  <Text style={[type.body, { color: t.text }]}>{s.title}</Text>
-                  <View style={styles.badge}>{tried[s.id] ? <TriedPill r={tried[s.id]} /> : <Pill text="Try it" tone="accent" />}</View>
-                  <Text style={[type.sub, { color: t.muted, marginTop: 2 }]}>
-                    {learnedModules(s)
-                      .map((id) => defOf(id)?.name ?? id)
-                      .join(', ')}
-                    {` · from your ${s.from}${s.tier === 2 ? ' (same part, another revision)' : ''}`}
-                  </Text>
-                  {message?.id === s.id ? <Text accessibilityLiveRegion={liveRegion} style={[type.small, { color: message.tone === 'ok' ? t.ok : t.danger, marginTop: 4 }]}>{message.text}</Text> : null}
-                  {working ? <Text style={[type.small, { color: t.muted, marginTop: 4 }]}>{WRITING}</Text> : null}
-                </View>
-                {working ? (
-                  <ActivityIndicator color={t.accentText} />
-                ) : (
-                  <Toggle value={on} disabled={!!busy || learnedKeys(s).some((k) => !checked.has(k))} label={s.title} onChange={(next) => run({ kind: 'learned', setting: s, on: next })} />
-                )}
-              </View>
-            );
-          })}
-        </Group>
-      ) : null}
+      {items.length && showExtras ? moreGroup : null}
 
-      {learned.length && (!cat || cat === 'Learned') ? (
-        <Group header="Learned from your car" help={SECTIONS.customiseLearned} footer={learnedWaiting.length ? `Waiting for ${learnedWaiting.map((s) => s.title).join(', ')}: the module did not answer with the coding it had when learned.` : undefined}>
-          {learnedReadyList.map((s, n) => {
-            const on = learnedIsOn(s, codings);
-            const working = busy === s.id;
-            return (
-              <View key={s.id} style={[styles.item, { borderColor: t.border, borderTopWidth: n ? StyleSheet.hairlineWidth : 0 }]}>
-                <View style={{ flex: 1 }}>
-                  <Text style={[type.body, { color: t.text }]}>{s.title}</Text>
-                  {tried[s.id] ? <View style={styles.badge}><TriedPill r={tried[s.id]} /></View> : null}
-                  <Text style={[type.sub, { color: t.muted, marginTop: 2 }]}>
-                    {learnedModules(s)
-                      .map((id) => defOf(id)?.name ?? id)
-                      .join(', ')}
-                  </Text>
-                  <Pressable accessibilityRole="button" hitSlop={6} disabled={!!busy} onPress={() => setPending({ kind: 'forget', setting: s })} style={{ marginTop: 2, minHeight: 44, justifyContent: 'center', alignSelf: 'flex-start' }}>
-                    <Text style={[type.small, { color: t.accentText }]}>Forget</Text>
-                  </Pressable>
-                  {message?.id === s.id ? <Text accessibilityLiveRegion={liveRegion} style={[type.small, { color: message.tone === 'ok' ? t.ok : t.danger, marginTop: 4 }]}>{message.text}</Text> : null}
-                  {working ? <Text style={[type.small, { color: t.muted, marginTop: 4 }]}>{WRITING}</Text> : null}
-                </View>
-                {working ? (
-                  <ActivityIndicator color={t.accentText} />
-                ) : (
-                  <Toggle value={on} disabled={!!busy || learnedKeys(s).some((k) => !checked.has(k))} label={s.title} onChange={(next) => run({ kind: 'learned', setting: s, on: next })} />
-                )}
-              </View>
-            );
-          })}
-        </Group>
-      ) : null}
-
-      {adaptReading && !cat ? (
-        <View style={styles.loading}>
-          <ActivityIndicator color={t.muted} />
-          <Text style={[type.sub, { color: t.muted, flex: 1 }]}>Reading adjustable values: {defOf(adaptReading)?.name ?? adaptReading}.</Text>
-        </View>
-      ) : null}
-
-      {!cat && adaptDone && !adaptReading && adaptItems.length > 0 && !adaptModules.length ? (
-        <Text style={[type.sub, { color: t.muted, marginBottom: space.lg }]}>
-          No adjustable values read from {[...new Set(adaptItems.map((a) => defOf(a.module)?.name ?? a.module))].join(' or ')}.
-        </Text>
-      ) : null}
-
-      {!cat
-        ? adaptModules.map((m, gi) => (
-            <Group key={m} header={`Adjustable values · ${defOf(m)?.name ?? m}`} help={gi === 0 ? SECTIONS.adaptations : undefined} footer={gi === adaptModules.length - 1 ? 'Each change saves at once, and the first value Pin16 read is kept as the original. A value the module does not have is not listed.' : undefined}>
-              {adaptItems
-                .filter((a) => a.module === m && typeof adaptValues[adaptationKey(a)] === 'number')
-                .map((a, n) => {
-                  const key = adaptationKey(a);
-                  const cur = adaptValues[key] as number;
-                  const working = adaptBusy === key;
-                  const orig = v.codingOriginal?.[key];
-                  const origValue = orig ? valueFromHex(orig) : null;
-                  const wide = !a.choices && (a.max - a.min) / a.step > 12;
-                  const msg = adaptMsg[key];
-                  return (
-                    <View key={key} style={[styles.adapt, { borderColor: t.border, borderTopWidth: n ? StyleSheet.hairlineWidth : 0 }]}>
-                      <View style={[styles.item, { paddingVertical: 0, paddingHorizontal: 0 }]}>
-                        <Pressable accessibilityRole="button" accessibilityState={{ expanded: adaptOpen === key }} onPress={() => setAdaptOpen(adaptOpen === key ? null : key)} style={{ flex: 1 }}>
-                          <Text style={[type.body, { color: t.text }]}>{a.title}</Text>
-                          <Text style={[type.small, { color: t.muted, marginTop: 1 }]}>
-                            Now {formatAdaptation(a, cur)}
-                            {inRange(a, cur) ? '' : ' (outside the usual range)'}
-                          </Text>
-                        </Pressable>
-                        {working ? (
-                          <ActivityIndicator color={t.accentText} accessibilityLabel="Writing" />
-                        ) : !a.choices && !wide ? (
-                          <Stepper label={a.title} value={formatAdaptation(a, cur)} width={64} disabled={adaptLocked} noLower={!canStep(a, cur, -1)} noHigher={!canStep(a, cur, 1)} onStep={(d) => void changeAdaptRef.current?.(a, stepValue(a, cur, d))} />
-                        ) : null}
-                      </View>
-                      {a.choices ? (
-                        <Chips options={a.choices.map((c) => ({ id: String(c.value), label: c.label }))} value={String(cur)} onCard tall disabled={adaptLocked} onPick={(id) => void changeAdaptRef.current?.(a, Number(id))} style={{ marginTop: space.sm }} />
-                      ) : null}
-                      {wide ? (
-                        <Field
-                          value={drafts[key] ?? String(cur)}
-                          onChange={(x) => setDrafts((d) => ({ ...d, [key]: x.replace(/[^0-9]/g, '').slice(0, 3) }))}
-                          keyboard="number-pad"
-                          number
-                          editable={!adaptLocked}
-                          accessibilityLabel={`${a.title}, ${a.min} to ${a.max} ${a.unit ?? ''}`}
-                          placeholder={`${a.min} to ${a.max} ${a.unit ?? ''}`}
-                          onEndEditing={(text) => {
-                            const typed = Number(text.trim());
-                            setDrafts((d) => {
-                              const { [key]: _gone, ...rest } = d;
-                              return rest;
-                            });
-                            if (!text.trim()) return;
-                            // Brought inside min, max and the step; nothing is sent for anything else.
-                            const x = clampToRow(a, typed);
-                            if (x == null) {
-                              setAdaptMsg((m) => ({ ...m, [key]: { ok: false, text: `${a.min} to ${a.max}${a.unit ? ` ${a.unit}` : ''} only, in whole numbers. Nothing was sent.` } }));
-                              return;
-                            }
-                            if (x !== typed) setAdaptMsg((m) => ({ ...m, [key]: { ok: true, text: `${a.min} to ${a.max}${a.unit ? ` ${a.unit}` : ''} only, so ${formatAdaptation(a, x)} is used.` } }));
-                            if (x !== cur) void changeAdaptRef.current?.(a, x);
-                          }}
-                          style={{ marginTop: space.sm }}
-                        />
-                      ) : null}
-                      {adaptOpen === key ? (
-                        <>
-                          <Text style={[type.small, { color: t.muted, marginTop: 4 }]}>{a.summary}</Text>
-                          <Text style={[type.small, { color: t.muted, marginTop: 4 }]}>
-                            {defOf(a.module)?.name ?? a.module}, adaptation channel {a.channel}. {a.choices ? '' : `${a.min} to ${a.max}${a.unit ? ` ${a.unit}` : ''}, steps of ${a.step}.`}
-                          </Text>
-                          {a.needs ? <Text style={[type.small, { color: t.muted, marginTop: 4 }]}>{a.needs}</Text> : null}
-                          <Pressable accessibilityRole="link" hitSlop={6} onPress={() => Linking.openURL(a.sources[0].url)} style={styles.link}>
-                            <Text style={[type.small, { color: t.accentText }]}>Source: {a.sources[0].label}</Text>
-                          </Pressable>
-                        </>
-                      ) : null}
-                      {working ? <Text style={[type.small, { color: t.muted, marginTop: 4 }]}>Writing. Keep this page open.</Text> : null}
-                      {msg?.text ? <Text accessibilityLiveRegion={liveRegion} style={[type.small, { color: msg.ok ? t.ok : t.danger, marginTop: 4 }]}>{msg.text}</Text> : null}
-                      {origValue != null && origValue !== cur ? (
-                        <Pressable accessibilityRole="button" hitSlop={6} disabled={adaptLocked} onPress={() => void changeAdaptRef.current?.(a, origValue, { putBack: true })} style={{ paddingVertical: 14, alignSelf: 'flex-start' }}>
-                          <Text style={[type.small, { color: t.accentText }]}>Put back original ({formatAdaptation(a, origValue)})</Text>
-                        </Pressable>
-                      ) : null}
-                    </View>
-                  );
-                })}
-            </Group>
-          ))
-        : null}
-
-      {items.length ? moreGroup : null}
-
-      {kbNotes.length ? (
+      {kbNotes.length && showExtras ? (
         <Group header="From Research notes" footer="Not confirmed on a car, so Pin16 does not offer these as switches.">
           {kbNotes.map((n, i) => (
             <ListRow key={n.id} first={i === 0} icon="note-text-outline" iconColour="grey" title={n.title} subtitle={n.summary} noChevron />
@@ -878,58 +980,19 @@ export default function Customise() {
         </Group>
       ) : null}
 
-      {/* The result of a put back shows here, where it was tapped, and stays when the Backups list empties. */}
-      {message?.id === RESTORE_MSG ? <Notice tone={message.tone} icon={message.tone === 'ok' ? 'check' : 'alert-circle-outline'} text={message.text} /> : null}
-
-      {restorable.length ? (
-        <Group header="Backups" help={SECTIONS.customiseBackups} footer="The coding each module had before Pin16 first changed it.">
-          {restorable.map((id, i) => {
-            const did = splitKey(id).did;
-            return (
-              <ListRow
-                key={id}
-                first={i === 0}
-                icon="restart"
-                iconColour="grey"
-                title={`Put back ${defOf(id)?.name ?? id} ${did ? 'setting' : 'coding'}`}
-                subtitle={busy === `restore-${id}` ? WRITING : did ? `The original setting. Technical: ${did}` : 'The original coding'}
-                disabled={!!busy || !checked.has(id)}
-                onPress={() => setPending({ kind: 'restore', module: id })}
-              />
-            );
-          })}
+      {showExtras ? (
+        <Group>
+          <ListRow
+            first
+            {...tool('timeline')}
+            title="Change timeline"
+            subtitle={Object.keys(originals).length ? 'Every change made to this car, with old and new values. Put one back or share the list.' : 'No changes yet. Each setting you change is listed here.'}
+            onPress={() => router.push({ pathname: '/customise/timeline', params: { vin: v.vin } })}
+          />
         </Group>
       ) : null}
 
-      {Object.values(codingHist).some((l) => l.length) ? (
-        <Group header="Coding history" help={SECTIONS.moduleCodingHistory} footer="Every coding read from or written to each module on this car. Tap one to see what changed and to put an earlier coding back.">
-          {Object.entries(codingHist)
-            .filter(([, l]) => l.length)
-            .map(([key, l], i) => (
-              <ListRow
-                key={key}
-                first={i === 0}
-                icon="history"
-                iconColour="grey"
-                title={defOf(key)?.name ?? key}
-                subtitle={`${l.length} coding${l.length === 1 ? '' : 's'} kept, latest ${stamp(l[0].at).date} ${stamp(l[0].at).time}`}
-                onPress={() => router.push({ pathname: '/workshop/[id]', params: { id: key, tab: 'coding' } })}
-              />
-            ))}
-        </Group>
-      ) : null}
-
-      <Group>
-        <ListRow
-          first
-          {...tool('timeline')}
-          title="Change timeline"
-          subtitle={Object.keys(originals).length ? 'Every change made to this car, with old and new values. Put one back or share the list.' : 'No changes yet. Each setting you change is listed here.'}
-          onPress={() => router.push({ pathname: '/customise/timeline', params: { vin: v.vin } })}
-        />
-      </Group>
-
-      {unreachable.length ? (
+      {unreachable.length && showExtras ? (
         <Group
           header="Not reachable on this car yet"
           help={SECTIONS.customiseUnreachable}
@@ -941,31 +1004,75 @@ export default function Customise() {
         </Group>
       ) : null}
 
-      {cats.length ? (
-        cats.map((c, k) => (
-          <Group key={c.name} header={`${c.name} · guides`} help={k === 0 ? SECTIONS.customiseGuides : undefined}>
-            {c.items.map((m, i) => (
-              <ListRow
-                key={m.id}
-                first={i === 0}
-                icon={CATEGORY_ICON[m.category] ?? 'tune-variant'}
-                iconColour={m.status === 'owner' ? 'green' : 'grey'}
-                title={m.title}
-                subtitle={`${m.options[0]} · ${STATUS_LABEL[m.status]}`}
-                onPress={() => router.push(`/customise/${m.id}`)}
-              />
-            ))}
-          </Group>
-        ))
-      ) : !items.length && !learned.length ? (
-        <View style={{ alignItems: 'center', paddingVertical: space.xxl * 2, paddingHorizontal: space.xl }}>
-          <PinMark lit={false} size={72} decorative />
-          <Text style={[type.title3, { color: t.text, marginTop: space.lg, textAlign: 'center' }]}>Nothing for this car yet</Text>
-          <Text style={[type.sub, { color: t.muted, textAlign: 'center', marginTop: space.sm }]}>
-            No public source documents settings Pin16 can change on this car.
-          </Text>
-        </View>
+      {!q && !cat ? (
+        cats.length ? (
+          cats.map((c, k) => (
+            <Group key={c.name} header={`${c.name} · guides`} help={k === 0 ? SECTIONS.customiseGuides : undefined}>
+              {c.items.map((m, i) => (
+                <ListRow
+                  key={m.id}
+                  first={i === 0}
+                  icon={CATEGORY_ICON[m.category] ?? 'tune-variant'}
+                  iconColour={m.status === 'owner' ? 'green' : 'grey'}
+                  title={m.title}
+                  subtitle={`${m.options[0]} · ${STATUS_LABEL[m.status]}`}
+                  onPress={() => router.push(`/customise/${m.id}`)}
+                />
+              ))}
+            </Group>
+          ))
+        ) : !items.length && !learned.length ? (
+          <View style={{ alignItems: 'center', paddingVertical: space.xxl * 2, paddingHorizontal: space.xl }}>
+            <PinMark lit={false} size={72} decorative />
+            <Text style={[type.title3, { color: t.text, marginTop: space.lg, textAlign: 'center' }]}>Nothing for this car yet</Text>
+            <Text style={[type.sub, { color: t.muted, textAlign: 'center', marginTop: space.sm }]}>
+              No public source documents settings Pin16 can change on this car.
+            </Text>
+          </View>
+        ) : null
       ) : null}
+
+      <SheetPage visible={!!pickA} title={pickA?.title ?? ''} onCancel={() => setPickKey(null)} onDone={pickWide && pickA && pickCur != null ? () => applyTyped(pickA, drafts[adaptationKey(pickA)] ?? '', pickCur) : undefined} doneLabel="Set">
+        {pickA && pickCur != null ? (
+          <ScrollView contentContainerStyle={{ padding: space.lg, paddingBottom: space.xxl }} keyboardShouldPersistTaps="handled">
+            {pickWide ? (
+              <Field
+                value={drafts[adaptationKey(pickA)] ?? String(pickCur)}
+                onChange={(x) => setDrafts((d) => ({ ...d, [adaptationKey(pickA)]: x.replace(/[^0-9]/g, '').slice(0, String(pickA.max).length) }))}
+                keyboard="number-pad"
+                number
+                editable={!adaptLocked}
+                accessibilityLabel={`${pickA.title}, ${pickA.min} to ${pickA.max} ${pickA.unit ?? ''}`}
+                placeholder={`${pickA.min} to ${pickA.max} ${pickA.unit ?? ''}`}
+                style={{ marginBottom: space.lg }}
+              />
+            ) : (
+              <Group header={`Now ${formatAdaptation(pickA, pickCur)}`}>
+                {pickOptions.map((o, n) => (
+                  <ListRow
+                    key={o.value}
+                    first={n === 0}
+                    title={o.label}
+                    selected={o.value === pickCur}
+                    noChevron
+                    disabled={adaptLocked}
+                    onPress={() => {
+                      setPickKey(null);
+                      if (o.value !== pickCur) void changeAdaptRef.current?.(pickA, o.value);
+                    }}
+                  />
+                ))}
+              </Group>
+            )}
+            {adaptMsg[adaptationKey(pickA)]?.text ? (
+              <Text accessibilityLiveRegion={liveRegion} style={[type.small, { color: adaptMsg[adaptationKey(pickA)].ok ? t.ok : t.danger, marginBottom: space.md }]}>
+                {adaptMsg[adaptationKey(pickA)].text}
+              </Text>
+            ) : null}
+            {adaptDetails(pickA, pickCur)}
+          </ScrollView>
+        ) : null}
+      </SheetPage>
 
       <ConfirmSheet
         visible={!!pending}
@@ -1002,10 +1109,10 @@ function TriedPill({ r }: { r: TryResult }) {
 const styles = StyleSheet.create({
   hero: { flexDirection: 'row', alignItems: 'center', gap: space.md, padding: space.lg },
   loading: { flexDirection: 'row', alignItems: 'center', gap: space.sm, padding: space.lg },
-  adapt: { paddingVertical: space.md, paddingHorizontal: space.lg },
-  item: { flexDirection: 'row', alignItems: 'center', gap: space.md, paddingVertical: space.md, paddingHorizontal: space.lg },
-  // A badge always sits on its own line under the setting's name.
-  badge: { flexDirection: 'row', marginTop: 4 },
+  // Tags (Unconfirmed, Works on your car) wrap under the setting's name.
+  tags: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 4 },
+  // Put back original and Coding history: one row of 2 compact buttons.
+  actions: { flexDirection: 'row', gap: space.sm, marginBottom: space.lg },
   // A text link: a 44 pt target.
   link: { minHeight: 44, justifyContent: 'center', alignSelf: 'flex-start' },
 

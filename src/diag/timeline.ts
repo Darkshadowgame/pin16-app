@@ -111,7 +111,7 @@ export function timelineText(rows: TimelineRow[], car: string, opts: { miles?: b
     if (extra.length) out.push(`  ${extra.join(', ')}`);
     out.push('');
   }
-  out.push('Made with Pin16. Backups are the coding each module had before Pin16 first changed it.');
+  out.push('Made with Pin16. The backup is the coding each module had before Pin16 first changed it.');
   return out.join('\n');
 }
 

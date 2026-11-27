@@ -37,7 +37,7 @@ describe('adjustable values list', () => {
     expect(has('vag-46', 13)).toBe(false);
     expect(has('vag-09', 6)).toBe(false);
     expect(has('vag-17', 2)).toBe(false);
-    expect(ADAPTATIONS.length).toBe(14);
+    expect(ADAPTATIONS.length).toBe(19);
   });
   it('copies the source ranges', () => {
     const a = (m: string, c: number) => ADAPTATIONS.find((x) => x.module === m && x.channel === c)!;

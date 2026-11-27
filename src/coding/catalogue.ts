@@ -360,6 +360,7 @@ export const CATALOGUE_ITEMS: CodingItem[] = [
     byte: 0,
     bits: [6],
     confidence: 'medium',
+    held: 'This says what is fitted to the car. It is not a setting.',
     note: 'Equipment flag: set only with the sensor fitted, or the module logs faults.',
     sources: [
       { label: 'vagcode.info: 09 Cent. Elect. 3C0 937 049 E (23-byte labels)', url: 'https://vagcode.info/en/components/7756fed0e8d08ce7ea9b8c9e3d94ad63.html' },
@@ -425,10 +426,11 @@ export const CATALOGUE_ITEMS: CodingItem[] = [
     category: 'Lights',
     platforms: ['PQ35'],
     module: 'vag-09',
+    length: 30,
     byte: 15,
     bits: [6],
     confidence: 'medium',
-    note: 'Facelift BCM (1K0 937 087) only; leave byte 18 at standard.',
+    note: 'Offered only on a 30-byte coding: on the 23-byte BCM these bytes hold percentage values. Facelift BCM (1K0 937 087) only; leave byte 18 at standard.',
     sources: [
       { label: 'SEATCupra.net: Leon Mk2 forum post', url: 'https://www.seatcupra.net/forums/goto/post?id=3649392' },
       { label: 'Ross-Tech wiki: Golf (5K) tweaks', url: 'https://wiki.ross-tech.com/wiki/index.php/VW_Golf/Golf_Plus_(5K/52)_Tweaks' },
@@ -441,10 +443,11 @@ export const CATALOGUE_ITEMS: CodingItem[] = [
     category: 'Lights',
     platforms: ['PQ35'],
     module: 'vag-09',
+    length: 30,
     byte: 24,
     bits: [7],
     confidence: 'low',
-    note: 'Facelift BCM (1K0 937 087) only; single source.',
+    note: 'Offered only on a 30-byte coding: on the 23-byte BCM these bytes hold percentage values. Facelift BCM (1K0 937 087) only; single source.',
     sources: [
       { label: 'SEATCupra.net: Leon Mk2 forum post', url: 'https://www.seatcupra.net/forums/goto/post?id=3649392' },
     ],
@@ -507,10 +510,11 @@ export const CATALOGUE_ITEMS: CodingItem[] = [
     category: 'Lights',
     platforms: ['PQ35'],
     module: 'vag-09',
+    length: 30,
     byte: 14,
     bits: [7],
     confidence: 'low',
-    note: 'Facelift BCM (1K0 937 087) only; sibling cars only. Reported disabled on LED-headlight cars.',
+    note: 'Offered only on a 30-byte coding: on the 23-byte BCM these bytes hold percentage values. Facelift BCM (1K0 937 087) only; sibling cars only. Reported disabled on LED-headlight cars.',
     sources: [
       { label: 'AS Coding: VW Golf 5/6 coding list', url: 'https://www.ascoding.ch/en/vw-golf-5-6-1k-e/' },
       { label: 'TDIClub forum: Golf Mk6 VCDS coding thread', url: 'http://forums.tdiclub.com/showthread.php?t=482612' },
@@ -606,9 +610,10 @@ export const CATALOGUE_ITEMS: CodingItem[] = [
     module: 'vag-46',
     byte: 0,
     bits: [4],
-    confidence: 'low',
-    note: 'A3 8P sibling only; the adaptation route is preferred on a Leon.',
+    confidence: 'medium',
+    note: 'The Golf 5 1K0 959 433 layout gives the same bit; the adaptation route (channel 4) is preferred. Reads on in this car.',
     sources: [
+      { label: 'vag-coding.net: Golf 5 (1K) automatic door locks (byte 0 bit 4)', url: 'https://www.vag-coding.net/vw/golf-5-1k/golf-5-1k-automatic-door-locks/' },
       { label: 'VCDS-Expert: Audi A3 8P VCDS coding list', url: 'https://vcds-expert.com/2016/06/18/audi-a3-8p-vcds-coding-list/' },
       { label: 'vagcode.info: 46 Comfort 1K0 959 433 BT', url: 'https://vagcode.info/en/components/70200cc6ce21d81df63dbc0448f6a0f4.html' },
     ],
@@ -622,9 +627,10 @@ export const CATALOGUE_ITEMS: CodingItem[] = [
     module: 'vag-46',
     byte: 0,
     bits: [3],
-    confidence: 'low',
-    note: 'A3 8P sibling only; the adaptation route is preferred on a Leon.',
+    confidence: 'medium',
+    note: 'The Golf 5 1K0 959 433 layout gives the same bit; the adaptation route (channel 5) is preferred. This bit was set at the factory read on 21 Nov and is clear now, so it was switched off since, by a tool Pin16 did not log.',
     sources: [
+      { label: 'vag-coding.net: Golf 5 (1K) automatic door unlocking (byte 0 bit 3)', url: 'https://www.vag-coding.net/vw/golf-5-1k/golf-5-1k-automatic-door-unlocking/' },
       { label: 'VCDS-Expert: Audi A3 8P VCDS coding list', url: 'https://vcds-expert.com/2016/06/18/audi-a3-8p-vcds-coding-list/' },
       { label: 'vagcode.info: 46 Comfort 1K0 959 433 BT', url: 'https://vagcode.info/en/components/70200cc6ce21d81df63dbc0448f6a0f4.html' },
     ],
@@ -638,8 +644,9 @@ export const CATALOGUE_ITEMS: CodingItem[] = [
     module: 'vag-46',
     byte: 7,
     bits: [3],
-    confidence: 'medium',
-    note: 'Leon layout (lock byte 7); the A3 8P differs.',
+    confidence: 'low',
+    held: 'A better source puts this elsewhere on this module.',
+    note: 'Older coding layout. Held at low: for the 19-byte 1K0 959 433 coding the Golf 5 layout puts this in byte 10 or 11 (see the pq35-confirm items). Byte 6 and 7 here come from a 2006 Leon post that gave no coding length.',
     sources: [
       { label: 'SEATCupra.net: Mk2 Leon VAG-COM guide', url: 'https://www.seatcupra.net/forums/threads/guide-the-mk2-leon-vag-com-guide.167515/' },
       { label: 'VCDS-Expert: Audi A3 8P VCDS coding list', url: 'https://vcds-expert.com/2016/06/18/audi-a3-8p-vcds-coding-list/' },
@@ -654,8 +661,9 @@ export const CATALOGUE_ITEMS: CodingItem[] = [
     module: 'vag-46',
     byte: 6,
     bits: [3],
-    confidence: 'medium',
-    note: 'Leon layout (unlock byte 6); the A3 8P differs.',
+    confidence: 'low',
+    held: 'A better source puts this elsewhere on this module.',
+    note: 'Older coding layout. Held at low: for the 19-byte 1K0 959 433 coding the Golf 5 layout puts this in byte 10 or 11 (see the pq35-confirm items). Byte 6 and 7 here come from a 2006 Leon post that gave no coding length.',
     sources: [
       { label: 'SEATCupra.net: Mk2 Leon VAG-COM guide', url: 'https://www.seatcupra.net/forums/threads/guide-the-mk2-leon-vag-com-guide.167515/' },
       { label: 'VCDS-Expert: Audi A3 8P VCDS coding list', url: 'https://vcds-expert.com/2016/06/18/audi-a3-8p-vcds-coding-list/' },
@@ -670,8 +678,9 @@ export const CATALOGUE_ITEMS: CodingItem[] = [
     module: 'vag-46',
     byte: 7,
     bits: [2],
-    confidence: 'medium',
-    note: 'Leon layout (lock byte 7); the A3 8P differs.',
+    confidence: 'low',
+    held: 'A better source puts this elsewhere on this module.',
+    note: 'Older coding layout. Held at low: for the 19-byte 1K0 959 433 coding the Golf 5 layout puts this in byte 10 or 11 (see the pq35-confirm items). Byte 6 and 7 here come from a 2006 Leon post that gave no coding length.',
     sources: [
       { label: 'SEATCupra.net: Mk2 Leon VAG-COM guide', url: 'https://www.seatcupra.net/forums/threads/guide-the-mk2-leon-vag-com-guide.167515/' },
       { label: 'VCDS-Expert: Audi A3 8P VCDS coding list', url: 'https://vcds-expert.com/2016/06/18/audi-a3-8p-vcds-coding-list/' },
@@ -686,8 +695,9 @@ export const CATALOGUE_ITEMS: CodingItem[] = [
     module: 'vag-46',
     byte: 6,
     bits: [2],
-    confidence: 'medium',
-    note: 'Leon layout (unlock byte 6); the A3 8P differs.',
+    confidence: 'low',
+    held: 'A better source puts this elsewhere on this module.',
+    note: 'Older coding layout. Held at low: for the 19-byte 1K0 959 433 coding the Golf 5 layout puts this in byte 10 or 11 (see the pq35-confirm items). Byte 6 and 7 here come from a 2006 Leon post that gave no coding length.',
     sources: [
       { label: 'SEATCupra.net: Mk2 Leon VAG-COM guide', url: 'https://www.seatcupra.net/forums/threads/guide-the-mk2-leon-vag-com-guide.167515/' },
       { label: 'VCDS-Expert: Audi A3 8P VCDS coding list', url: 'https://vcds-expert.com/2016/06/18/audi-a3-8p-vcds-coding-list/' },
@@ -702,8 +712,9 @@ export const CATALOGUE_ITEMS: CodingItem[] = [
     module: 'vag-46',
     byte: 9,
     bits: [6],
-    confidence: 'medium',
-    note: 'On by default.',
+    confidence: 'low',
+    held: 'A better source puts this elsewhere on this module.',
+    note: 'One 2006 Leon post says on by default, but it reads off on this car, and byte 9 bits 1 and 2 follow the Golf 5 rain closing layout here. Held at low.',
     sources: [
       { label: 'SEATCupra.net: Mk2 Leon VAG-COM guide', url: 'https://www.seatcupra.net/forums/threads/guide-the-mk2-leon-vag-com-guide.167515/' },
       { label: 'VCDS-Expert: Audi A3 8P VCDS coding list', url: 'https://vcds-expert.com/2016/06/18/audi-a3-8p-vcds-coding-list/' },
@@ -711,17 +722,19 @@ export const CATALOGUE_ITEMS: CodingItem[] = [
   },
   {
     id: 'cat-leon-tailgate-soft-touch',
-    title: 'Tailgate soft-touch opening',
-    summary: 'The tailgate opens directly with the handle switch.',
+    title: 'Boot opens from the key button',
+    summary: 'Hold the boot button on the key for 2 seconds and the latch opens directly.',
     category: 'Locking and alarm',
     platforms: ['PQ35'],
     module: 'vag-46',
-    byte: 1,
-    bits: [4],
+    length: 19,
+    parts: ['1K0959433'],
+    byte: 2,
+    bits: [3],
     confidence: 'low',
-    note: 'Single source; value not stated in the source.',
+    note: '1 source, written for the Golf 5 from 2006 with a retrofit opener. Reads on on this car.',
     sources: [
-      { label: 'SEATCupra.net: Leon Mk2 forum post', url: 'https://www.seatcupra.net/forums/goto/post?id=2934974' },
+      { label: 'vag-coding.net: Golf 5 automatic tailgate opening', url: 'https://www.vag-coding.net/vw/golf-5-1k/golf-5-1k-automatic-tailgate-opening-retrofit' },
     ],
   },
   // MQB
@@ -1552,6 +1565,7 @@ export const CATALOGUE_ITEMS: CodingItem[] = [
     bits: [7],
     confidence: 'high',
     note: 'Older 09 module (3C0 937 049) only; read the part number first.',
+    parts: ['3C0937049'],
     sources: [
       { label: 'Ross-Tech wiki: Golf (1K) central electronics', url: 'https://wiki.ross-tech.com/wiki/index.php/VW_Golf_(1K)_Central_Electronics' },
       { label: 'vagcode.info: 09 Cent. Elect. 3C0 937 049 E (Passat B6)', url: 'https://vagcode.info/en/components/e891d6ab70b934f776fa7ac134ffd652.html' },
@@ -1568,6 +1582,7 @@ export const CATALOGUE_ITEMS: CodingItem[] = [
     bits: [5],
     confidence: 'high',
     note: 'Needs a light sensor. Older 09 module (3C0 937 049) only; read the part number first.',
+    parts: ['3C0937049'],
     sources: [
       { label: 'Ross-Tech wiki: Golf (1K) central electronics', url: 'https://wiki.ross-tech.com/wiki/index.php/VW_Golf_(1K)_Central_Electronics' },
       { label: 'vagcode.info: 09 Cent. Elect. 3C0 937 049 E (Passat B6)', url: 'https://vagcode.info/en/components/e891d6ab70b934f776fa7ac134ffd652.html' },
@@ -1584,6 +1599,7 @@ export const CATALOGUE_ITEMS: CodingItem[] = [
     bits: [1],
     confidence: 'medium',
     note: 'Older 09 module (3C0 937 049) only; read the part number first.',
+    parts: ['3C0937049'],
     sources: [
       { label: 'vagcode.info: 09 Cent. Elect. 3C0 937 049 E (Passat B6)', url: 'https://vagcode.info/en/components/e891d6ab70b934f776fa7ac134ffd652.html' },
     ],
@@ -1599,6 +1615,7 @@ export const CATALOGUE_ITEMS: CodingItem[] = [
     bits: [0],
     confidence: 'medium',
     note: 'Older 09 module (3C0 937 049) only; read the part number first. UK: flashing lamps are lawful only within the ECE R48 emergency stop signal rules.',
+    parts: ['3C0937049'],
     sources: [
       { label: 'vagcode.info: 09 Cent. Elect. 3C0 937 049 E (Passat B6)', url: 'https://vagcode.info/en/components/e891d6ab70b934f776fa7ac134ffd652.html' },
     ],
@@ -1614,6 +1631,7 @@ export const CATALOGUE_ITEMS: CodingItem[] = [
     bits: [3],
     confidence: 'medium',
     note: 'Use this or the North America variant, not both. Older 09 module (3C0 937 049) only; read the part number first.',
+    parts: ['3C0937049'],
     sources: [
       { label: 'vagcode.info: 09 Cent. Elect. 3C0 937 049 E (Passat B6)', url: 'https://vagcode.info/en/components/e891d6ab70b934f776fa7ac134ffd652.html' },
     ],
@@ -1629,6 +1647,7 @@ export const CATALOGUE_ITEMS: CodingItem[] = [
     bits: [6],
     confidence: 'medium',
     note: 'Equipment flag: set only with the sensor fitted. Older 09 module (3C0 937 049) only; read the part number first.',
+    parts: ['3C0937049'],
     sources: [
       { label: 'vagcode.info: 09 Cent. Elect. 3C0 937 049 E (Passat B6)', url: 'https://vagcode.info/en/components/e891d6ab70b934f776fa7ac134ffd652.html' },
     ],
@@ -1690,6 +1709,7 @@ export const CATALOGUE_ITEMS: CodingItem[] = [
     bits: [2],
     confidence: 'high',
     note: 'Use byte 11 or byte 15 for DRL, not both. BCM 09 (1K0/3AA 937 087) only; read the part number first.',
+    parts: ['1K0937087', '3AA937087'],
     sources: [
       { label: 'Ross-Tech wiki: Passat (3C/CC) tweaks', url: 'https://wiki.ross-tech.com/wiki/index.php/VW_Passat_(36)_Tweaks' },
       { label: 'vagcode.info: BCM 3AA 937 087 E (Passat B7)', url: 'https://vagcode.info/en/components/ae9d927911bac292ba63684746e1bb8d.html' },
@@ -1707,6 +1727,7 @@ export const CATALOGUE_ITEMS: CodingItem[] = [
     bits: [6],
     confidence: 'high',
     note: 'Use byte 11 or byte 15 for DRL, not both. BCM 09 (1K0/3AA 937 087) only; read the part number first.',
+    parts: ['1K0937087', '3AA937087'],
     sources: [
       { label: 'Ross-Tech wiki: Passat (3C/CC) tweaks', url: 'https://wiki.ross-tech.com/wiki/index.php/VW_Passat_(36)_Tweaks' },
       { label: 'vagcode.info: BCM 3AA 937 087 E (Passat B7)', url: 'https://vagcode.info/en/components/ae9d927911bac292ba63684746e1bb8d.html' },
@@ -1724,6 +1745,7 @@ export const CATALOGUE_ITEMS: CodingItem[] = [
     bits: [7],
     confidence: 'high',
     note: 'BCM 09 (1K0/3AA 937 087) only; read the part number first.',
+    parts: ['1K0937087', '3AA937087'],
     sources: [
       { label: 'vagcode.info: BCM 3AA 937 087 E (Passat B7)', url: 'https://vagcode.info/en/components/ae9d927911bac292ba63684746e1bb8d.html' },
       { label: 'vagcode.info: BCM 1K0 937 087 P (Superb II)', url: 'https://vagcode.info/en/components/0cd72dd7fb5e8271dc6f90b06f06b42c.html' },
@@ -1742,6 +1764,7 @@ export const CATALOGUE_ITEMS: CodingItem[] = [
     bits: [2],
     confidence: 'high',
     note: 'Ross-Tech advises against changing: fog dimming may be legally required. BCM 09 (1K0/3AA 937 087) only; read the part number first.',
+    parts: ['1K0937087', '3AA937087'],
     sources: [
       { label: 'vagcode.info: BCM 3AA 937 087 E (Passat B7)', url: 'https://vagcode.info/en/components/ae9d927911bac292ba63684746e1bb8d.html' },
       { label: 'vagcode.info: BCM 1K0 937 087 P (Superb II)', url: 'https://vagcode.info/en/components/0cd72dd7fb5e8271dc6f90b06f06b42c.html' },
@@ -1759,6 +1782,7 @@ export const CATALOGUE_ITEMS: CodingItem[] = [
     bits: [5],
     confidence: 'high',
     note: 'BCM 09 (1K0/3AA 937 087) only; read the part number first.',
+    parts: ['1K0937087', '3AA937087'],
     sources: [
       { label: 'vagcode.info: BCM 3AA 937 087 E (Passat B7)', url: 'https://vagcode.info/en/components/ae9d927911bac292ba63684746e1bb8d.html' },
       { label: 'vagcode.info: BCM 1K0 937 087 P (Superb II)', url: 'https://vagcode.info/en/components/0cd72dd7fb5e8271dc6f90b06f06b42c.html' },
@@ -1776,6 +1800,7 @@ export const CATALOGUE_ITEMS: CodingItem[] = [
     bits: [6],
     confidence: 'high',
     note: 'Needs auto light switch and rain/light sensor. BCM 09 (1K0/3AA 937 087) only; read the part number first.',
+    parts: ['1K0937087', '3AA937087'],
     sources: [
       { label: 'vagcode.info: BCM 3AA 937 087 E (Passat B7)', url: 'https://vagcode.info/en/components/ae9d927911bac292ba63684746e1bb8d.html' },
       { label: 'vagcode.info: BCM 1K0 937 087 P (Superb II)', url: 'https://vagcode.info/en/components/0cd72dd7fb5e8271dc6f90b06f06b42c.html' },
@@ -1793,6 +1818,7 @@ export const CATALOGUE_ITEMS: CodingItem[] = [
     bits: [2],
     confidence: 'medium',
     note: 'On means manual mode; off is automatic with the rain/light sensor. BCM 09 (1K0/3AA 937 087) only; read the part number first.',
+    parts: ['1K0937087', '3AA937087'],
     sources: [
       { label: 'vagcode.info: BCM 3AA 937 087 E (Passat B7)', url: 'https://vagcode.info/en/components/ae9d927911bac292ba63684746e1bb8d.html' },
       { label: 'Ross-Tech wiki: Passat (3C/CC) tweaks', url: 'https://wiki.ross-tech.com/wiki/index.php/VW_Passat_(36)_Tweaks' },
@@ -1809,6 +1835,7 @@ export const CATALOGUE_ITEMS: CodingItem[] = [
     bits: [0],
     confidence: 'medium',
     note: 'BCM 09 (1K0/3AA 937 087) only; read the part number first.',
+    parts: ['1K0937087', '3AA937087'],
     sources: [
       { label: 'vagcode.info: BCM 3AA 937 087 E (Passat B7)', url: 'https://vagcode.info/en/components/ae9d927911bac292ba63684746e1bb8d.html' },
       { label: 'Ross-Tech wiki: Passat (3C/CC) tweaks', url: 'https://wiki.ross-tech.com/wiki/index.php/VW_Passat_(36)_Tweaks' },
@@ -1825,6 +1852,7 @@ export const CATALOGUE_ITEMS: CodingItem[] = [
     bits: [1],
     confidence: 'high',
     note: 'BCM 09 (1K0/3AA 937 087) only; read the part number first. UK: flashing lamps are lawful only within the ECE R48 emergency stop signal rules.',
+    parts: ['1K0937087', '3AA937087'],
     sources: [
       { label: 'vagcode.info: BCM 3AA 937 087 E (Passat B7)', url: 'https://vagcode.info/en/components/ae9d927911bac292ba63684746e1bb8d.html' },
       { label: 'vagcode.info: BCM 1K0 937 087 P (Superb II)', url: 'https://vagcode.info/en/components/0cd72dd7fb5e8271dc6f90b06f06b42c.html' },
@@ -1841,6 +1869,7 @@ export const CATALOGUE_ITEMS: CodingItem[] = [
     bits: [2],
     confidence: 'high',
     note: 'BCM 09 (1K0/3AA 937 087) only; read the part number first. UK: flashing lamps are lawful only within the ECE R48 emergency stop signal rules.',
+    parts: ['1K0937087', '3AA937087'],
     sources: [
       { label: 'vagcode.info: BCM 3AA 937 087 E (Passat B7)', url: 'https://vagcode.info/en/components/ae9d927911bac292ba63684746e1bb8d.html' },
       { label: 'vagcode.info: BCM 1K0 937 087 P (Superb II)', url: 'https://vagcode.info/en/components/0cd72dd7fb5e8271dc6f90b06f06b42c.html' },
@@ -1857,6 +1886,7 @@ export const CATALOGUE_ITEMS: CodingItem[] = [
     bits: [4],
     confidence: 'high',
     note: 'Estate only. BCM 09 (1K0/3AA 937 087) only; read the part number first.',
+    parts: ['1K0937087', '3AA937087'],
     sources: [
       { label: 'vagcode.info: BCM 3AA 937 087 E (Passat B7)', url: 'https://vagcode.info/en/components/ae9d927911bac292ba63684746e1bb8d.html' },
       { label: 'vagcode.info: BCM 1K0 937 087 P (Superb II)', url: 'https://vagcode.info/en/components/0cd72dd7fb5e8271dc6f90b06f06b42c.html' },
@@ -1873,6 +1903,7 @@ export const CATALOGUE_ITEMS: CodingItem[] = [
     bits: [6],
     confidence: 'high',
     note: 'Estate only. BCM 09 (1K0/3AA 937 087) only; read the part number first.',
+    parts: ['1K0937087', '3AA937087'],
     sources: [
       { label: 'vagcode.info: BCM 3AA 937 087 E (Passat B7)', url: 'https://vagcode.info/en/components/ae9d927911bac292ba63684746e1bb8d.html' },
       { label: 'vagcode.info: BCM 1K0 937 087 P (Superb II)', url: 'https://vagcode.info/en/components/0cd72dd7fb5e8271dc6f90b06f06b42c.html' },
@@ -1889,6 +1920,7 @@ export const CATALOGUE_ITEMS: CodingItem[] = [
     bits: [7],
     confidence: 'high',
     note: 'BCM 09 (1K0/3AA 937 087) only; read the part number first. UK: DRL are compulsory on cars type-approved from Feb 2011; check before switching them off.',
+    parts: ['1K0937087', '3AA937087'],
     sources: [
       { label: 'vagcode.info: BCM 3AA 937 087 E (Passat B7)', url: 'https://vagcode.info/en/components/ae9d927911bac292ba63684746e1bb8d.html' },
       { label: 'vagcode.info: BCM 1K0 937 087 P (Superb II)', url: 'https://vagcode.info/en/components/0cd72dd7fb5e8271dc6f90b06f06b42c.html' },
@@ -1906,6 +1938,7 @@ export const CATALOGUE_ITEMS: CodingItem[] = [
     bits: [6],
     confidence: 'high',
     note: 'Also needs "Rain Closing active" in the rain/light sensor subsystem. BCM 09 (1K0/3AA 937 087) only; read the part number first.',
+    parts: ['1K0937087', '3AA937087'],
     sources: [
       { label: 'vagcode.info: BCM 1K0 937 087 P (Superb II)', url: 'https://vagcode.info/en/components/0cd72dd7fb5e8271dc6f90b06f06b42c.html' },
       { label: 'Ross-Tech wiki: Golf (5K) tweaks', url: 'https://wiki.ross-tech.com/wiki/index.php/VW_Golf/Golf_Plus_(5K/52)_Tweaks' },
@@ -1922,6 +1955,7 @@ export const CATALOGUE_ITEMS: CodingItem[] = [
     bits: [1],
     confidence: 'medium',
     note: 'BCM 09 (1K0/3AA 937 087) only; read the part number first.',
+    parts: ['1K0937087', '3AA937087'],
     sources: [
       { label: 'vagcode.info: BCM 1K0 937 087 P (Superb II)', url: 'https://vagcode.info/en/components/0cd72dd7fb5e8271dc6f90b06f06b42c.html' },
     ],
@@ -1937,6 +1971,7 @@ export const CATALOGUE_ITEMS: CodingItem[] = [
     bits: [4],
     confidence: 'medium',
     note: 'BCM 09 (1K0/3AA 937 087) only; read the part number first.',
+    parts: ['1K0937087', '3AA937087'],
     sources: [
       { label: 'vagcode.info: BCM 1K0 937 087 P (Superb II)', url: 'https://vagcode.info/en/components/0cd72dd7fb5e8271dc6f90b06f06b42c.html' },
     ],
@@ -1952,6 +1987,7 @@ export const CATALOGUE_ITEMS: CodingItem[] = [
     bits: [2],
     confidence: 'medium',
     note: 'BCM 09 (1K0/3AA 937 087) only; read the part number first.',
+    parts: ['1K0937087', '3AA937087'],
     sources: [
       { label: 'vagcode.info: BCM 1K0 937 087 P (Superb II)', url: 'https://vagcode.info/en/components/0cd72dd7fb5e8271dc6f90b06f06b42c.html' },
     ],
@@ -1967,6 +2003,7 @@ export const CATALOGUE_ITEMS: CodingItem[] = [
     bits: [1],
     confidence: 'medium',
     note: 'BCM 09 (1K0/3AA 937 087) only; read the part number first.',
+    parts: ['1K0937087', '3AA937087'],
     sources: [
       { label: 'vagcode.info: BCM 1K0 937 087 P (Superb II)', url: 'https://vagcode.info/en/components/0cd72dd7fb5e8271dc6f90b06f06b42c.html' },
     ],
@@ -2217,9 +2254,13 @@ export const CATALOGUE_ITEMS: CodingItem[] = [
     "bits": [
       0
     ],
-    "confidence": "low",
-    "note": "Label dump of a 23-byte BCM (3C0 937 049 E). The 2007 Leon BCM part is not public; read part number and coding length first. Turning a check off hides a failed bulb.",
+    "confidence": "medium",
+    "note": "Same bit in the 21-byte and 30-byte label dumps. The bytes around it read as the other tool showed them on this car. Turning a check off hides a failed bulb. Label only.",
     "sources": [
+      {
+        "label": "vagcode.info: 3C8 937 049 E (30-byte BCM) labels, same bit",
+        "url": "https://vagcode.info/en/components/aa581e2bc3b035872013a4c4ea95c133.html"
+      },
       {
         "label": "vagcode.info: 3C0 937 049 E (23-byte BCM) labels",
         "url": "https://vagcode.info/en/components/7756fed0e8d08ce7ea9b8c9e3d94ad63.html"
@@ -2239,9 +2280,13 @@ export const CATALOGUE_ITEMS: CodingItem[] = [
     "bits": [
       2
     ],
-    "confidence": "low",
-    "note": "As leon-cold-check-low-beam.",
+    "confidence": "medium",
+    "note": "Same bit in the 21-byte and 30-byte label dumps. The bytes around it read as the other tool showed them on this car. Turning a check off hides a failed bulb. Label only.",
     "sources": [
+      {
+        "label": "vagcode.info: 3C8 937 049 E (30-byte BCM) labels, same bit",
+        "url": "https://vagcode.info/en/components/aa581e2bc3b035872013a4c4ea95c133.html"
+      },
       {
         "label": "vagcode.info: 3C0 937 049 E (23-byte BCM) labels",
         "url": "https://vagcode.info/en/components/7756fed0e8d08ce7ea9b8c9e3d94ad63.html"
@@ -2261,9 +2306,17 @@ export const CATALOGUE_ITEMS: CodingItem[] = [
     "bits": [
       5
     ],
-    "confidence": "low",
-    "note": "As leon-cold-check-low-beam.",
+    "confidence": "high",
+    "note": "Same bit in the 21-byte and 30-byte label dumps. The bytes around it read as the other tool showed them on this car. Turning a check off hides a failed bulb. The other tool shows the rear indicator check on, and this bit reads on.",
     "sources": [
+      {
+        "label": "vagcode.info: 3C8 937 049 E (30-byte BCM) labels, same bit",
+        "url": "https://vagcode.info/en/components/aa581e2bc3b035872013a4c4ea95c133.html"
+      },
+      {
+        "label": "Shown by another tool on this car, screen recording of 15 Nov 2026",
+        "url": ""
+      },
       {
         "label": "vagcode.info: 3C0 937 049 E (23-byte BCM) labels",
         "url": "https://vagcode.info/en/components/7756fed0e8d08ce7ea9b8c9e3d94ad63.html"
@@ -2272,8 +2325,8 @@ export const CATALOGUE_ITEMS: CodingItem[] = [
   },
   {
     "id": "cat-leon-cold-check-front-side",
-    "title": "Bulb check: front side lights (lights off)",
-    "summary": "The car checks the front side light bulbs while they are off.",
+    "title": "Bulb check: front parking lights (lights off)",
+    "summary": "The car checks the front parking light bulbs while they are off.",
     "category": "Lights",
     "platforms": [
       "PQ35"
@@ -2283,9 +2336,17 @@ export const CATALOGUE_ITEMS: CodingItem[] = [
     "bits": [
       1
     ],
-    "confidence": "low",
-    "note": "As leon-cold-check-low-beam.",
+    "confidence": "high",
+    "note": "Same bit in the 21-byte and 30-byte label dumps. The bytes around it read as the other tool showed them on this car. Turning a check off hides a failed bulb. A second source gives the same byte and bit.",
     "sources": [
+      {
+        "label": "vagcode.info: 3C8 937 049 E (30-byte BCM) labels, same bit",
+        "url": "https://vagcode.info/en/components/aa581e2bc3b035872013a4c4ea95c133.html"
+      },
+      {
+        "label": "vag-coding.net: Golf 5 (1K) deactivate burnt-out bulb display",
+        "url": "https://www.vag-coding.net/vw/golf-5-1k/golf-5-1k-deactivate-burnt-out-bulb-display/"
+      },
       {
         "label": "vagcode.info: 3C0 937 049 E (23-byte BCM) labels",
         "url": "https://vagcode.info/en/components/7756fed0e8d08ce7ea9b8c9e3d94ad63.html"
@@ -2294,8 +2355,8 @@ export const CATALOGUE_ITEMS: CodingItem[] = [
   },
   {
     "id": "cat-leon-cold-check-rear-side",
-    "title": "Bulb check: rear side lights (lights off)",
-    "summary": "The car checks the rear side light bulbs while they are off.",
+    "title": "Bulb check: rear parking lights (lights off)",
+    "summary": "The car checks the rear parking light bulbs while they are off.",
     "category": "Lights",
     "platforms": [
       "PQ35"
@@ -2305,9 +2366,17 @@ export const CATALOGUE_ITEMS: CodingItem[] = [
     "bits": [
       2
     ],
-    "confidence": "low",
-    "note": "As leon-cold-check-low-beam.",
+    "confidence": "high",
+    "note": "Same bit in the 21-byte and 30-byte label dumps. The bytes around it read as the other tool showed them on this car. Turning a check off hides a failed bulb. The other tool shows the rear parking check on, and this bit reads on.",
     "sources": [
+      {
+        "label": "vagcode.info: 3C8 937 049 E (30-byte BCM) labels, same bit",
+        "url": "https://vagcode.info/en/components/aa581e2bc3b035872013a4c4ea95c133.html"
+      },
+      {
+        "label": "Shown by another tool on this car, screen recording of 15 Nov 2026",
+        "url": ""
+      },
       {
         "label": "vagcode.info: 3C0 937 049 E (23-byte BCM) labels",
         "url": "https://vagcode.info/en/components/7756fed0e8d08ce7ea9b8c9e3d94ad63.html"
@@ -2331,6 +2400,7 @@ export const CATALOGUE_ITEMS: CodingItem[] = [
       5
     ],
     "confidence": "medium",
+    "held": "Changes 4 bits at once, and no source says what each of the 4 does on this coding.",
     "note": "Byte 3 bit 5 (comfort functions via remote inactive) must also be clear. 46 coding is 14 or 19 bytes by part suffix; the A3 8P uses other bytes. Adaptation channel 017 = 1 is the master switch. Some MY07 cars already have it.",
     "sources": [
       {

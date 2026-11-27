@@ -10,7 +10,7 @@ describe('one item per setting, the best-supported kept', () => {
   });
 
   it('has no duplicate settings', () => {
-    const keys = ALL_ITEMS.map((i) => `${i.platforms.join()}|${i.module}|${i.byte}|${i.bits.join()}|${i.field?.mask ?? ''}`);
+    const keys = ALL_ITEMS.map((i) => `${i.platforms.join()}|${i.module}|${i.byte}|${i.bits.join()}|${i.field?.mask ?? ''}|${i.short?.flag ?? ''}`);
     expect(new Set(keys).size).toBe(keys.length);
   });
 });

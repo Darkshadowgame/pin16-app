@@ -3,7 +3,10 @@ import { router, useFocusEffect } from 'expo-router';
 import { chargeVerdict, restVerdict } from '../../../obd/battery';
 import React, { useCallback, useEffect, useState } from 'react';
 import { Pressable, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
+import { adaptationKey, adaptationsFor } from '../../../coding/adaptations';
 import { codingItemsFor } from '../../../coding/items';
+import { adaptValuesFromCache, codingsFromCache, offeredSettings } from '../../../coding/offered';
+import { modulePart, sharedLearned } from '../../../coding/shared';
 import { modsForVehicle } from '../../../mods/catalogue';
 import { modulesFor } from '../../../obd/modules';
 import { estimateSeconds, learnEstimate } from '../../../learn/runLearn';
@@ -17,10 +20,10 @@ import { methodsFor } from '../../../service/procedures';
 import { describeDue, vehicleServiceDue } from '../../../service/reminder';
 import { useSettings } from '../../../settings';
 import { useConnection } from '../../../state';
-import { onTool, radius, space, ToolColour, type, useTheme } from '../../../theme';
+import { MONO, radius, space, type, useTheme } from '../../../theme';
 import { MakeBadge, makeLogoFor } from '../../../brand/MakeBadge';
 import { PinMark } from '../../../brand/PinMark';
-import { Arrive, Button, GlowCard, Group, HeaderButton, Icon, IconName, ListRow, Notice, Pill, Screen, tap, tool, TOOLS } from '../../../ui';
+import { Arrive, Button, GlowCard, Group, Icon, IconName, JobCard, ListRow, Notice, Pill, Screen, tool, TOOLS } from '../../../ui';
 import { GUIDES } from '../../../help';
 import { WhichCar } from '../../../components/WhichCar';
 import { YourCars } from '../../../components/YourCars';
@@ -134,8 +137,36 @@ function Connected() {
   );
 
   const mods = modsForVehicle(v.group, v.platform);
-  const settings = conn.client?.supportsModules ? codingItemsFor(v.group, v.platform).length : 0;
-  const customCount = settings + mods.length;
+  // The settings Customise lists for this car, counted by the same function from the
+  // codings and values it last read (kept on the phone). Until it has read once there
+  // is no count, only the fact that there are settings to read. The exact count shows only
+  // when every module that has settings is in the saved copy with its coding and, where it
+  // has adjustable values, at least one of them read by this build.
+  const cache = v.codingCache ?? {};
+  const adaptRows = adaptationsFor(v.group, v.platform);
+  const itemModules = new Set(codingItemsFor(v.group, v.platform).filter((i) => !i.held).map((i) => i.module));
+  const allModules = new Set([...itemModules, ...adaptRows.map((a) => a.module)]);
+  const hasRead =
+    !!conn.client?.supportsModules &&
+    allModules.size > 0 &&
+    [...allModules].every((m) => !!cache[m] && (!adaptRows.some((a) => a.module === m) || adaptRows.some((a) => a.module === m && cache[adaptationKey(a)] != null)));
+  const settings = hasRead
+    ? offeredSettings({
+        group: v.group,
+        platform: v.platform,
+        codings: codingsFromCache(cache),
+        ctxOf: (id) => {
+          const def = conn.client?.moduleById(id);
+          return { style: def ? conn.client?.codingStyle(def) : undefined, part: modulePart(v, id) };
+        },
+        adaptValues: adaptValuesFromCache(cache),
+        learned: v.learned,
+        borrowed: sharedLearned(v, garage.vehicles),
+        tried: v.tried,
+      }).count
+    : 0;
+  const readable = !!conn.client?.supportsModules && (codingItemsFor(v.group, v.platform).length > 0 || (v.learned?.length ?? 0) > 0);
+  const customCount = settings + (readable ? 1 : 0) + mods.length;
   const methods = v.group !== 'other' ? methodsFor(v.group, v.platform).length : 0;
   // The health check asks only the car's known modules once two full checks
   // found them; before that the number depends on the car, so none is given.
@@ -169,39 +200,56 @@ function Connected() {
         .join(', ')}. Run it again to ${learnAgainVerb(learnRunLabel(v))}: ${aboutRange(lo, hi, { lower: true })}.`
     : `One button reads everything: faults, modules, sensors, emissions, MOT and battery. ${aboutRange(lo, hi)}.`;
 
+  const name = v.nickname || [v.brand, v.model].filter(Boolean).join(' ');
+  const detailLine = [v.year, v.nickname ? [v.brand, v.model].filter(Boolean).join(' ') : makeLogoFor(v.brand) ? null : v.brand, v.fuel, v.platform ?? (v.group !== 'other' ? GROUP_LABEL[v.group] : null)].filter(Boolean).join(' · ');
+  const customiseStatus = settings ? `${settings.toLocaleString('en-GB')} setting${settings === 1 ? '' : 's'} for this car` : readable ? 'Open to read this car’s settings' : mods.length ? `${mods.length} guide${mods.length === 1 ? '' : 's'}` : 'Learn my car first';
+
   return (
-    <Screen
-      title={v.nickname || v.model || v.brand}
-      guide={GUIDES.home}
-    >
-      {/* The badge names the make; the line beneath gives year, fuel and platform, as a Your cars row does. */}
-      <View style={styles.metaRow}>
-        <MakeBadge brand={v.brand} size={24} />
-        <Pill text={demo ? 'Demo car' : 'Connected'} tone="ok" icon="checkbox-blank-circle" />
-        <View style={{ flex: 1 }} />
-        <Pressable accessibilityRole="button" accessibilityLabel="Disconnect from the car" hitSlop={12} onPress={() => conn.disconnect()}>
-          <Text style={[type.sub, { color: t.accentText, fontWeight: '600' }]}>Disconnect</Text>
-        </Pressable>
+    <Screen title="Car" guide={GUIDES.home}>
+      {/* The car: who it is, the end of its VIN, and whether the adapter is talking to it. */}
+      <View style={[styles.carCard, { backgroundColor: t.surface }]}>
+        <View style={styles.carTop}>
+          <MakeBadge brand={v.brand} size={44} />
+          <View style={{ flex: 1 }}>
+            <Text accessibilityRole="header" style={[type.title, displayFont, { color: t.text }]}>
+              {name}
+            </Text>
+            {detailLine ? <Text style={[type.sub, type.number, { color: t.muted }]}>{detailLine}</Text> : null}
+          </View>
+        </View>
+        <View style={styles.carBottom}>
+          <Text style={[type.small, { color: t.muted }]}>
+            VIN ending <Text style={{ fontFamily: MONO, color: t.text }}>{v.vin.slice(-6)}</Text>
+          </Text>
+          <View style={{ flex: 1 }} />
+          <Pill text={demo ? 'Demo car' : 'Connected'} tone="ok" icon="checkbox-blank-circle" />
+          <Pressable accessibilityRole="button" accessibilityLabel="Disconnect from the car" hitSlop={12} onPress={() => conn.disconnect()} style={styles.disconnect}>
+            <Text style={[type.sub, { color: t.accentText, fontWeight: '600' }]}>Disconnect</Text>
+          </Pressable>
+        </View>
       </View>
-      <Text style={[type.sub, type.number, { color: t.muted, marginBottom: space.lg }]}>
-        {[v.year, v.nickname ? [v.brand, v.model].filter(Boolean).join(' ') : makeLogoFor(v.brand) ? null : v.brand, v.fuel, v.platform ?? (v.group !== 'other' ? GROUP_LABEL[v.group] : null)].filter(Boolean).join(' · ')}
-      </Text>
 
       <WhichCar />
 
+      {/* The 4 jobs, in the order an owner works in: find faults, change settings, service, watch values. */}
       <Arrive>
-        <GlowCard tone={!checked && !info.milOn ? 'plain' : alert ? 'fault' : 'ok'} style={{ padding: space.xl }}>
-          <View style={styles.healthTop}>
+        <JobCard
+          icon={TOOLS.health.icon}
+          colour={TOOLS.health.colour}
+          title="Health check"
+          tone={!checked && !info.milOn ? 'plain' : alert ? 'fault' : 'ok'}
+          status={checked ? `Last health check, ${when(checkedAt!)}${last?.complete === false ? ' (stopped early)' : ''}` : 'Not checked yet'}
+          onPress={() => router.push(checked ? { pathname: '/diagnostics', params: { view: 'last' } } : '/diagnostics')}
+          style={{ padding: space.xl }}
+        >
+          <View style={[styles.healthTop, { marginTop: space.md }]}>
             <View style={{ flex: 1 }}>
-              <Text style={[type.small, { color: t.muted }]}>{checked ? `Last health check, ${when(checkedAt!)}${last?.complete === false ? ' (stopped early)' : ''}` : 'Health check'}</Text>
               {checked ? (
                 <View style={styles.bigRow}>
                   <Text style={[type.figure, type.number, displayFont, { color: faults ? t.danger : t.ok }]}>{faults}</Text>
                   <Text style={[type.title3, { color: t.text, marginBottom: 8 }]}>{faults === 1 ? 'fault' : 'faults'}</Text>
                 </View>
-              ) : (
-                <Text style={[type.title, { color: t.text, marginVertical: space.sm }]}>Not checked yet</Text>
-              )}
+              ) : null}
               {last?.noAnswer ? <Text style={[type.small, { color: t.danger, fontWeight: '600' }]}>No control module answered</Text> : null}
             </View>
             <PinMark lit={!alert} size={64} decorative />
@@ -233,31 +281,26 @@ function Connected() {
           <Text style={[type.small, { color: t.muted, textAlign: 'center', marginTop: space.sm }]}>
             {knownModules ? `Checks this car’s ${knownModules} control modules and the engine light` : withModules ? 'Checks the control modules and the engine light' : 'Reads the engine computer and its light'}
           </Text>
-        </GlowCard>
+        </JobCard>
       </Arrive>
+      <JobCard icon={TOOLS.customise.icon} colour={TOOLS.customise.colour} title="Customise" status={customiseStatus} onPress={() => router.push(customCount ? '/customise' : '/learn-car')} />
+      <JobCard icon={TOOLS.service.icon} colour={TOOLS.service.colour} title="Service" status={serviceTileValue(v, prefs.speed === 'mph')} onPress={() => router.push('/service')} />
+      <JobCard
+        icon={TOOLS.live.icon}
+        colour={TOOLS.live.colour}
+        title="Live data"
+        status={sensorsFound ? sensorCountShort(sensors) : liveCount == null ? '…' : `${liveCount} value${liveCount === 1 ? '' : 's'}`}
+        onPress={() => router.push('/live')}
+      />
 
-      {/* The order an owner works in: faults (above), settings, values, service. */}
-      <View style={styles.tiles}>
-        <Tile
-          icon={TOOLS.customise.icon}
-          colour={TOOLS.customise.colour}
-          title="Customise"
-          value={settings ? 'Change settings' : mods.length ? `${mods.length} guide${mods.length === 1 ? '' : 's'}` : 'Learn my car first'}
-          onPress={() => router.push(customCount ? '/customise' : '/learn-car')}
-        />
-        <Tile icon={TOOLS.live.icon} colour={TOOLS.live.colour} title="Live data" value={sensorsFound ? sensorCountShort(sensors) : liveCount == null ? '…' : `${liveCount} value${liveCount === 1 ? '' : 's'}`} onPress={() => router.push('/live')} />
-        <Tile icon={TOOLS.service.icon} colour={TOOLS.service.colour} title="Service" value={serviceTileValue(v, prefs.speed === 'mph')} onPress={() => router.push('/service')} />
-        <Tile icon={TOOLS.history.icon} colour={TOOLS.history.colour} title="History" value="Checks and changes" onPress={() => router.push({ pathname: '/history', params: { vin: v.vin } })} />
-      </View>
-
-      {v.learnSnapshot ? (
-        <Group>
-          <ListRow first {...tool('learnSetting')} title="Carry on learning a setting" subtitle="Starting point saved. Tap to compare what changed." onPress={() => router.push('/customise/learn')} />
-        </Group>
-      ) : null}
+      <Text accessibilityRole="header" style={[type.title3, styles.moreHeading, { color: t.text }]}>
+        More tools
+      </Text>
 
       <Group>
-        <ListRow first {...tool('learn')} title="Learn my car" subtitle={learnLine} onPress={() => router.push('/learn-car')} />
+        <ListRow first {...tool('history')} title="History" subtitle="Checks, clears and changes" onPress={() => router.push({ pathname: '/history', params: { vin: v.vin } })} />
+        <ListRow {...tool('learn')} title="Learn my car" subtitle={learnLine} onPress={() => router.push('/learn-car')} />
+        {v.learnSnapshot ? <ListRow {...tool('learnSetting')} title="Carry on learning a setting" subtitle="Starting point saved. Tap to compare what changed." onPress={() => router.push('/customise/learn')} /> : null}
       </Group>
 
       <Group header="Driving">
@@ -312,44 +355,19 @@ function Stat({ icon, label, value, tone, onPress, note }: { icon: IconName; lab
   );
 }
 
-// One of the four main tools: a flat tile with the tool's own square as its only colour.
-function Tile({ icon, colour, title, value, onPress }: { icon: IconName; colour: ToolColour; title: string; value: string; onPress: () => void }) {
-  const t = useTheme();
-  const c = t[colour];
-  // At the larger text sizes a tile takes the full width, so its words are not cut.
-  const large = useWindowDimensions().fontScale > 1.3;
-  return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityLabel={`${title}. ${value}`}
-      onPress={() => {
-        tap();
-        onPress();
-      }}
-      style={({ pressed }) => [styles.tile, large && { flexBasis: '100%' }, { backgroundColor: t.surface, transform: [{ scale: pressed ? 0.97 : 1 }] }]}
-    >
-      <View style={[styles.tileIcon, { backgroundColor: c }]}>
-        <Icon name={icon} size={20} color={onTool(colour, t)} />
-      </View>
-      <Text style={[type.heading, { color: t.text, marginTop: space.md }]}>{title}</Text>
-      {/* The status wraps to as many lines as it needs; it is never cut short. */}
-      <Text style={[type.small, { color: t.muted, marginTop: 1 }]}>{value}</Text>
-    </Pressable>
-  );
-}
-
 // "9 Nov 2026, 17:02": the same words as the Health check page (src/timeText.ts).
 const when = (ms: number): string => dateTimeText(ms);
 
 const styles = StyleSheet.create({
   welcome: { alignItems: 'center', paddingVertical: space.xxl, paddingHorizontal: space.xl },
-  metaRow: { flexDirection: 'row', alignItems: 'center', gap: space.sm, marginTop: -space.sm, marginBottom: space.sm },
   healthTop: { flexDirection: 'row', alignItems: 'flex-start', gap: space.md },
   bigRow: { flexDirection: 'row', alignItems: 'flex-end', gap: space.sm, marginTop: 2 },
   stats: { flexDirection: 'row', flexWrap: 'wrap', gap: space.sm, marginTop: space.lg },
   stat: { flex: 1, borderRadius: radius.md, padding: space.sm + 2 },
   statLarge: { flex: 0, width: '100%' },
-  tiles: { flexDirection: 'row', flexWrap: 'wrap', gap: space.md, marginBottom: space.lg },
-  tile: { flexBasis: '47%', flexGrow: 1, borderRadius: radius.lg, padding: space.lg, overflow: 'hidden', minHeight: 116 },
-  tileIcon: { width: 38, height: 38, borderRadius: radius.md, alignItems: 'center', justifyContent: 'center' },
+  carCard: { borderRadius: radius.lg, padding: space.lg, marginBottom: space.lg },
+  carTop: { flexDirection: 'row', alignItems: 'center', gap: space.md },
+  carBottom: { flexDirection: 'row', alignItems: 'center', gap: space.sm, marginTop: space.md },
+  disconnect: { minHeight: 44, justifyContent: 'center', paddingLeft: space.xs },
+  moreHeading: { marginTop: space.lg, marginBottom: space.md, marginLeft: space.xs },
 });

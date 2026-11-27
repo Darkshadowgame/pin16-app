@@ -5,7 +5,9 @@
 // on its next start and can be folded into the app's own lists later.
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { isList, readJsonStrict } from './storageRead';
-import { ALL_ITEMS, CodingItem } from './coding/items';
+import { ALL_ITEMS, CodingItem, itemApplies } from './coding/items';
+import { dedupeItems } from './coding/categories';
+import { codingsFromCache } from './coding/offered';
 import { FUSE_CARS } from './data/fuses';
 import { githubReady, listFiles, readFile, writeFile } from './share/github';
 
@@ -223,7 +225,7 @@ export function kbSettings(list: KbEntry[]): CodingItem[] {
 }
 
 // Search across the knowledge base and the app's own lists.
-export function searchEverything(list: KbEntry[], v: { brand: string; model: string; platform: string | null; vin?: string; year?: number | null }, query: string, kind?: KbKind): string[] {
+export function searchEverything(list: KbEntry[], v: { brand: string; model: string; platform: string | null; vin?: string; year?: number | null; codingCache?: Record<string, string>; modulePart?: (moduleId: string) => string }, query: string, kind?: KbKind): string[] {
   const q = query.toLowerCase().split(/\s+/).filter(Boolean);
   const hit = (s: string) => q.every((w) => s.toLowerCase().includes(w));
   const out: string[] = [];
@@ -232,8 +234,12 @@ export function searchEverything(list: KbEntry[], v: { brand: string; model: str
     if (!q.length || hit(`${e.title} ${e.body} ${e.kind}`)) out.push(`[knowledge base, ${KB_KIND_LABEL[e.kind]}] ${e.title}: ${e.body.slice(0, 400)}${e.sources[0] ? ` (source: ${e.sources[0].url})` : ''}`);
   }
   if (!kind || kind === 'setting') {
-    for (const i of ALL_ITEMS) {
-      if (v.platform && !i.platforms.includes(v.platform)) continue;
+    // Held items are never listed. Where the car's coding for a module is known, only
+    // the settings that fit it are listed, after the same dedupe Customise uses.
+    const codings = codingsFromCache(v.codingCache);
+    for (const i of dedupeItems(ALL_ITEMS.filter((x) => !x.held && (!v.platform || x.platforms.includes(v.platform))))) {
+      const c = codings[i.module];
+      if (c && !itemApplies(i, c, { style: c.length === 3 ? 'short' : 'long', part: v.modulePart?.(i.module) })) continue;
       if (!q.length || hit(`${i.title} ${i.summary} ${i.category}`)) out.push(`[built-in setting ${i.id}] ${i.title}: ${i.summary} (module ${i.module}, byte ${i.byte}, bit ${i.bits.join('+')}, ${i.confidence})`);
     }
   }

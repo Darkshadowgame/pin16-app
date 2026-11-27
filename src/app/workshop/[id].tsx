@@ -1,7 +1,8 @@
 import { router, Stack, useIsFocused, useLocalSearchParams } from 'expo-router';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
-import { CodingItem, codingItemsFor, fitsStyle, isOn, placeLabel, withItem } from '../../coding/items';
+import { CodingItem, codingItemsFor, isOn, itemApplies, placeLabel, withItem } from '../../coding/items';
+import { modulePart } from '../../coding/shared';
 import { preflightCheck } from '../../coding/preflight';
 import { groupLabels } from '../../data/groupLabels';
 import { lookupDtc } from '../../data/dtcLibrary';
@@ -178,7 +179,7 @@ export default function ControlModule() {
   const changed = !!coding && !!draft && toHex(coding) !== toHex(draft);
   const knowledge = v.knowledge?.[def.id];
   const items: CodingItem[] = [...codingItemsFor(v.group, v.platform)].filter(
-    (i) => i.module === def.id && !!draft && fitsStyle(i, style) && (i.short ? draft.length === 3 : i.length ? draft.length === i.length : draft.length > i.byte),
+    (i) => i.module === def.id && !!draft && itemApplies(i, draft, { style, part: modulePart(v, def.id) }),
   );
   const bitName = (byte: number, bit: number) => items.find((i) => i.byte === byte && (i.bits.includes(bit) || (!!i.field && ((i.field.mask >> bit) & 1) === 1)))?.title;
   const imperial = { speed: settings.speed === 'mph', temp: settings.temp === '°F' };

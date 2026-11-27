@@ -5,7 +5,9 @@ import { HistoryEntry, loadHistory, onHistory } from '../history';
 import { SECTIONS } from '../help';
 import { faultLabel } from '../diag/faults';
 import { dateTimeText } from '../timeText';
-import { Group, ListRow } from '../ui';
+import { StyleSheet, View } from 'react-native';
+import { space, useTheme } from '../theme';
+import { Group, Icon, ListRow, Pill } from '../ui';
 import { CodeRow } from './CodeRow';
 
 export function useLastScan(vin: string | undefined): HistoryEntry | null {
@@ -35,11 +37,17 @@ export const when = (at: number): string => dateTimeText(at);
 export const NO_MEANING = 'Meaning not in the library yet';
 
 export function LastScan({ vin, entry, limit = 12 }: { vin: string; entry: HistoryEntry; limit?: number }) {
-  const faults = entry.faults ?? [];
+  const t = useTheme();
+  const all = entry.faults ?? [];
+  const faults = all.slice(0, limit);
+  // The saved faults by module, in the order they were found: the same list
+  // as a new check, with each module opening to its faults.
+  const modules = [...new Set(faults.map((f) => f.module))];
+  const [openIds, setOpenIds] = useState<Record<string, boolean>>({});
   return (
     <Group
       header={`Last health check, ${when(entry.at)}${entry.complete === false ? ' (stopped early)' : ''}`}
-      footer={faults.length ? 'Tap a fault for what it means and, where Pin16 knows them, the likely causes and fixes.' : undefined}
+      footer={all.length ? 'Tap a module to see its faults, then a fault for what it means and, where Pin16 knows them, the likely causes and fixes.' : undefined}
       help={SECTIONS.lastScan}
     >
       {entry.noAnswer ? (
@@ -52,22 +60,43 @@ export function LastScan({ vin, entry, limit = 12 }: { vin: string; entry: Histo
           noChevron
         />
       ) : null}
-      {faults.length ? (
-        faults.slice(0, limit).map((f, i) => (
-          <CodeRow
-            key={`${f.module}-${f.code}-${i}`}
-            first={i === 0 && !entry.noAnswer}
-            code={f.code}
-            label={shortCode(f.code)}
-            title={faultLabel(f) ?? NO_MEANING}
-            sub={f.module}
-            module={f.module}
-          />
-        ))
+      {modules.length ? (
+        modules.map((m, k) => {
+          const list = faults.filter((f) => f.module === m);
+          const open = openIds[m] ?? modules.length === 1;
+          const word = `${list.length} fault${list.length === 1 ? '' : 's'}`;
+          return (
+            <View key={m}>
+              <ListRow
+                first={k === 0 && !entry.noAnswer}
+                icon="alert-circle"
+                iconColour="red"
+                title={m}
+                label={`${m}. ${word}`}
+                noChevron
+                expanded={open}
+                right={
+                  <View style={styles.moduleRight}>
+                    <Pill text={word} tone="danger" />
+                    <Icon name={open ? 'chevron-up' : 'chevron-down'} size={13} color={t.faint} />
+                  </View>
+                }
+                onPress={() => setOpenIds((old) => ({ ...old, [m]: !open }))}
+              />
+              {open
+                ? list.map((f, i) => <CodeRow key={`${f.module}-${f.code}-${i}`} code={f.code} label={shortCode(f.code)} title={faultLabel(f) ?? NO_MEANING} sub={f.module} module={f.module} />)
+                : null}
+            </View>
+          );
+        })
       ) : entry.noAnswer ? null : (
         <ListRow first icon="check-circle-outline" iconColour="green" title="No faults found" subtitle={entry.detail} noChevron />
       )}
-      {faults.length > limit ? <ListRow title={`${faults.length - limit} more in History`} onPress={() => router.push({ pathname: '/history', params: { vin } })} /> : null}
+      {all.length > limit ? <ListRow title={`${all.length - limit} more in History`} onPress={() => router.push({ pathname: '/history', params: { vin } })} /> : null}
     </Group>
   );
 }
+
+const styles = StyleSheet.create({
+  moduleRight: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
+});
