@@ -21,6 +21,14 @@ export interface CodingItem {
   bits: number[];
   // A multi-bit field instead: the bits under mask hold on or off.
   field?: { mask: number; on: number; off: number };
+  // A number instead of a switch: the whole byte at `byte` holds the value
+  // (bits is []). Offered only on a byte listed in NUMERIC_BYTES for the module
+  // and coding length, and only when `length` is given. A value must be a whole
+  // number from min to max, on the grid that starts at min and steps by `step`.
+  number?: { min: number; max: number; step: number; unit: string };
+  // A list of choices at one place in a short code: the value floor(code / divisor) % modulo
+  // is one of the options (byte is 0 and bits is []). The module must hold a short code.
+  pick?: { divisor: number; modulo: number; options: { value: number; label: string }[] };
   // low: listed under "Try these". The switch writes at once like any other.
   confidence: 'high' | 'medium' | 'low';
   // Login code the module asks for before this change, when sources give one.
@@ -52,6 +60,9 @@ const EVO_SWEEP = { label: 'vag-coding.net: Q7 (4M) needle check', url: 'https:/
 const EVO_LAP = { label: 'vag-coding.net: A7 (C8) lap timer', url: 'https://www.vag-coding.net/audi/a7-c8/a7-c8-lap-timer' };
 const MLB_TWEAKS = { label: 'Ross-Tech wiki: A4/A5 (8K/8T) tweaks (MLB sibling)', url: 'https://wiki.ross-tech.com/wiki/index.php/Audi_A4/S4/A5/S5_(8K/8T)_Tweaks' };
 
+const VAGDATA = { label: 'VAGData: Passat B6 (3C) coding tables (same module family)', url: 'https://vagdata.de/passat-b6/' };
+const GOLF5_US = { label: 'vag-coding.net: Golf 5 (1K) turn signals in US mode', url: 'https://www.vag-coding.net/vw/golf-5-1k/golf-5-1k-activate-turn-signals-in-us-mode/' };
+const IGORWEB = { label: 'igorweb.org: VCDS coding list', url: 'https://igorweb.org/eng/vcds.html' };
 const SEEN_ON_CAR = { label: 'Seen changing on this car, Listen recording of 21 Nov 2026', url: '' };
 
 const VC_E = { label: 'vagcode.info: 09 Cent. Elect. 3C0 937 049 E labels (label file 3C0-937-049-23-H)', url: 'https://vagcode.info/en/components/7756fed0e8d08ce7ea9b8c9e3d94ad63.html' };
@@ -424,6 +435,293 @@ export const CODING_ITEMS: CodingItem[] = [
     note: 'Short coding, digits 3 and 4, +04. Reads on in this car and the other tool shows it on.',
     sources: [RT_LEON_CLUSTER, GOLF5_WASHER, SHOWN],
   },
+  // Number settings on the 23-byte 09: the whole byte holds the value (see NUMERIC_BYTES).
+  {
+    id: 'cat-leon-side-marker-brightness',
+    title: 'Front indicators as parking lights, brightness',
+    summary: 'How brightly the front indicators glow as parking lights, from 0 to 100 %. 0 is off.',
+    category: 'Lights',
+    platforms: ['PQ35'],
+    module: 'vag-09',
+    length: 23,
+    byte: 7,
+    bits: [],
+    number: { min: 0, max: 100, step: 1, unit: '%' },
+    confidence: 'high',
+    note: 'The label reads "Zusatzfunktion Blinker vorne links/rechts als Standlicht vorne links/rechts (USA und Canada)", resolution 1 %. On the Listen recording of 21 Nov 2026 this byte went from 00 to 64 hex for 100 %, back to 00 for 0 %, and to 01 for the setting the owner marked "Side light as parking light on". The car reads 01 now.',
+    sources: [SEEN_ON_CAR, VAGDATA, GOLF5_US],
+  },
+  {
+    id: 'cat-leon-drl-brightness',
+    title: 'Daytime running light brightness',
+    summary: 'How bright the daytime running lights are, from 0 to 100 %.',
+    category: 'Lights',
+    platforms: ['PQ35'],
+    module: 'vag-09',
+    length: 23,
+    byte: 8,
+    bits: [],
+    number: { min: 0, max: 100, step: 1, unit: '%' },
+    confidence: 'high',
+    note: 'Only matters when the daytime running lights are on. The label reads "Dimmung Tagfahrlicht", resolution 1 %. The label file says bytes 7 to 16 are "Decimal Value (Resolution: 1%)". Another tool showed 80 % on this car while this byte read 50 hex.',
+    sources: [VC_E, VAGDATA, SHOWN],
+  },
+  {
+    id: 'cat-leon-brake-as-tail-brightness',
+    title: 'Brake lights as tail lights, brightness',
+    summary: 'How brightly the brake lights glow as tail lights, from 0 to 100 %.',
+    category: 'Lights',
+    platforms: ['PQ35'],
+    module: 'vag-09',
+    length: 23,
+    byte: 9,
+    bits: [],
+    number: { min: 0, max: 100, step: 1, unit: '%' },
+    confidence: 'medium',
+    note: 'The label reads "Zusatzfunktion Bremslicht links/rechts als Schlusslicht", resolution 1 %. Another tool showed 50 % for this while the byte read 32 hex.',
+    sources: [VAGDATA, SHOWN],
+  },
+  {
+    id: 'cat-leon-rear-fog-as-tail-brightness',
+    title: 'Rear fog lights as tail lights, brightness',
+    summary: 'How brightly the rear fog lights glow as tail lights, from 0 to 100 %. 0 is off.',
+    category: 'Lights',
+    platforms: ['PQ35'],
+    module: 'vag-09',
+    length: 23,
+    byte: 10,
+    bits: [],
+    number: { min: 0, max: 100, step: 1, unit: '%' },
+    confidence: 'medium',
+    note: 'The label reads "Zusatzfunktion Nebelschlussleuchte links/rechts als Schlusslicht", resolution 1 %. Another tool showed 0 % for this while the byte read 00.',
+    sources: [VAGDATA, SHOWN],
+  },
+  {
+    id: 'cat-leon-front-parking-brightness',
+    title: 'Front parking light brightness',
+    summary: 'How bright the front parking lights are, from 0 to 100 %.',
+    category: 'Lights',
+    platforms: ['PQ35'],
+    module: 'vag-09',
+    length: 23,
+    byte: 11,
+    bits: [],
+    number: { min: 0, max: 100, step: 1, unit: '%' },
+    confidence: 'medium',
+    note: 'The label reads "Zusatzfunktion Standlicht vorne links/rechts". Another tool showed 50 % for this while the byte read 32 hex.',
+    sources: [VAGDATA, SHOWN],
+  },
+  {
+    id: 'cat-leon-rear-parking-brightness',
+    title: 'Rear parking light brightness',
+    summary: 'How bright the rear parking lights are, from 0 to 100 %.',
+    category: 'Lights',
+    platforms: ['PQ35'],
+    module: 'vag-09',
+    length: 23,
+    byte: 12,
+    bits: [],
+    number: { min: 0, max: 100, step: 1, unit: '%' },
+    confidence: 'medium',
+    note: 'The label reads "Dimmung Standlicht hinten links/rechts", resolution 1 %. Another tool showed 50 % for this while the byte read 32 hex.',
+    sources: [VAGDATA, SHOWN],
+  },
+  {
+    id: 'cat-leon-front-fog-brightness',
+    title: 'Front fog light brightness',
+    summary: 'How bright the front fog lights are, from 0 to 100 %.',
+    category: 'Lights',
+    platforms: ['PQ35'],
+    module: 'vag-09',
+    length: 23,
+    byte: 20,
+    bits: [],
+    number: { min: 0, max: 100, step: 1, unit: '%' },
+    confidence: 'high',
+    note: 'The label reads "Dimmung Nebelscheinwerfer", resolution 1 %. One source gives the range as 1 to 99 %. Another tool showed 50 % for this while the byte read 32 hex.',
+    sources: [VAGDATA, GOLF5_DRL, SHOWN],
+  },
+  {
+    id: 'cat-leon-rear-fog',
+    title: 'Rear fog light',
+    summary: 'The rear fog light works. A UK car needs a working rear fog light to pass its MOT.',
+    category: 'Lights',
+    platforms: ['PQ35'],
+    module: 'vag-09',
+    length: 23,
+    byte: 4,
+    bits: [],
+    field: { mask: 0x40, on: 0x00, off: 0x40 },
+    confidence: 'high',
+    note: 'The source bit is "Rear Fog Lights deactivated", so on here means that bit is clear. Another tool showed ENABLED on this car while the bit read clear.',
+    sources: [VC_E, SHOWN],
+  },
+  // A choice at one place in the cluster's short code (the Ross-Tech page calls it "Country").
+  {
+    id: 'cat-leon-cluster-region',
+    title: 'Instrument cluster region',
+    summary: 'Which country the instrument cluster is set for, for example Great Britain. This also changes how the outside lights behave.',
+    category: 'Instrument cluster',
+    platforms: ['PQ35'],
+    module: 'vag-17',
+    byte: 0,
+    bits: [],
+    pick: { divisor: 100, modulo: 10, options: [{ value: 1, label: 'Europe (EU)' }, { value: 2, label: 'USA (US)' }, { value: 3, label: 'Canada (CDN)' }, { value: 4, label: 'Great Britain (GB)' }, { value: 5, label: 'Japan (JP)' }, { value: 6, label: 'Saudi Arabia (SA)' }, { value: 7, label: 'Australia (AUS)' }] },
+    confidence: 'high',
+    note: 'It is the 5th of the 7 digits of the short code, and the car reads 0004401, so 4.',
+    sources: [RT_LEON_CLUSTER, SHOWN],
+  },
+  // Comfort (46) bits from the Passat B6 table, 19-byte coding; the table gives no coding length (replica/leon-numeric-bytes-2026-11-28.md, section 2).
+  {
+    id: 'cat-leon-alarm-siren',
+    title: 'Alarm siren fitted',
+    summary: 'An alarm siren is fitted. Off stops the car checking for it, so the alarm cannot sound it.',
+    category: 'Locking and alarm',
+    platforms: ['PQ35'],
+    module: 'vag-46',
+    length: 19,
+    parts: ['1K0959433'],
+    byte: 16,
+    bits: [4],
+    confidence: 'low',
+    note: 'The module logs fault 01134, alarm horn (H12). The label reads "DWA-Sirenen Schnittstelle aktiv". The table is for the sibling Passat and gives no coding length. Reads on in this car.',
+    sources: [VAGDATA],
+  },
+  {
+    id: 'cat-leon-sync-mirrors-b14',
+    title: 'Mirrors adjust together',
+    summary: 'Adjusting the driver mirror moves the passenger mirror too.',
+    category: 'Mirrors',
+    platforms: ['PQ35'],
+    module: 'vag-46',
+    length: 19,
+    parts: ['1K0959433'],
+    byte: 14,
+    bits: [6],
+    confidence: 'low',
+    note: 'A second source says the same place: "in byte 14 check bit 6". The label reads "synchrone Spiegelverstellung". The table is for the sibling Passat and gives no coding length. Reads on in this car.',
+    sources: [VAGDATA, IGORWEB],
+  },
+  {
+    id: 'cat-leon-mirror-dip-reverse',
+    title: 'Passenger mirror dips in reverse',
+    summary: 'The passenger mirror tilts down when reverse is selected.',
+    category: 'Mirrors',
+    platforms: ['PQ35'],
+    module: 'vag-46',
+    length: 19,
+    parts: ['1K0959433'],
+    byte: 14,
+    bits: [7],
+    confidence: 'low',
+    note: 'The source says this works only with seat memory. The label reads "Spiegelabsenkung bei R\u00fcckw\u00e4rtsfahrt (nur mit Sitz-Memory)". The table is for the sibling Passat and gives no coding length. Reads on in this car.',
+    sources: [VAGDATA],
+  },
+  {
+    id: 'cat-leon-remote-ignition-on',
+    title: 'Remote buttons work with the ignition on',
+    summary: 'The remote buttons still work while the ignition is on.',
+    category: 'Locking and alarm',
+    platforms: ['PQ35'],
+    module: 'vag-46',
+    length: 19,
+    parts: ['1K0959433'],
+    byte: 13,
+    bits: [1],
+    confidence: 'low',
+    note: 'The label reads "FFB bei \u201eKlemme 15 EIN\u201c aktiv". The table is for the sibling Passat and gives no coding length. Reads off in this car.',
+    sources: [VAGDATA],
+  },
+  {
+    id: 'cat-leon-alarm-arm-flash',
+    title: 'Flash when the alarm arms',
+    summary: 'The indicators flash when the alarm arms.',
+    category: 'Locking and alarm',
+    platforms: ['PQ35'],
+    module: 'vag-46',
+    length: 19,
+    parts: ['1K0959433'],
+    byte: 13,
+    bits: [6],
+    confidence: 'low',
+    note: 'The label reads "DWA sch\u00e4rfen mit Blinklicht quittieren". The table is for the sibling Passat and gives no coding length. Reads off in this car.',
+    sources: [VAGDATA],
+  },
+  {
+    id: 'cat-leon-alarm-arm-horn',
+    title: 'Horn when the alarm arms',
+    summary: 'The horn sounds when the alarm arms.',
+    category: 'Locking and alarm',
+    platforms: ['PQ35'],
+    module: 'vag-46',
+    length: 19,
+    parts: ['1K0959433'],
+    byte: 13,
+    bits: [7],
+    confidence: 'low',
+    note: 'The label reads "DWA sch\u00e4rfen mit Horn quittieren". The table is for the sibling Passat and gives no coding length. Reads off in this car.',
+    sources: [VAGDATA],
+  },
+  {
+    id: 'cat-leon-alarm-auto-arm',
+    title: 'Alarm arms by itself',
+    summary: 'The alarm arms by itself, with no press of the remote.',
+    category: 'Locking and alarm',
+    platforms: ['PQ35'],
+    module: 'vag-46',
+    length: 19,
+    parts: ['1K0959433'],
+    byte: 15,
+    bits: [5],
+    confidence: 'low',
+    note: 'The label reads "DWA Passive Arming". The table is for the sibling Passat and gives no coding length. Reads off in this car.',
+    sources: [VAGDATA],
+  },
+  {
+    id: 'cat-leon-boot-central-locking',
+    title: 'Boot locks with the central locking',
+    summary: 'The boot locks and unlocks with the central locking.',
+    category: 'Locking and alarm',
+    platforms: ['PQ35'],
+    module: 'vag-46',
+    length: 19,
+    parts: ['1K0959433'],
+    byte: 1,
+    bits: [7],
+    confidence: 'low',
+    note: 'The label reads "ZV-Heck: Heckklappe in Zentralverriegelung". The table is for the sibling Passat and gives no coding length. Reads on in this car.',
+    sources: [VAGDATA],
+  },
+  {
+    id: 'cat-leon-boot-contact',
+    title: 'Boot release is contact controlled',
+    summary: 'The boot opens by touching its release.',
+    category: 'Locking and alarm',
+    platforms: ['PQ35'],
+    module: 'vag-46',
+    length: 19,
+    parts: ['1K0959433'],
+    byte: 1,
+    bits: [5],
+    confidence: 'low',
+    note: 'The label reads "ZV-Heckklappe kontaktgesteuert". The table is for the sibling Passat and gives no coding length. Reads off in this car.',
+    sources: [VAGDATA],
+  },
+  {
+    id: 'cat-leon-boot-soft-touch',
+    title: 'Boot soft touch, direct release',
+    summary: 'The boot latch opens directly, with no separate release step.',
+    category: 'Locking and alarm',
+    platforms: ['PQ35'],
+    module: 'vag-46',
+    length: 19,
+    parts: ['1K0959433'],
+    byte: 1,
+    bits: [4],
+    confidence: 'low',
+    note: 'The vag-coding.net Golf 5 page labels this same bit in English as "Central Locking (Rear Lid) Softtouch (direct open/no release)" for a car before 2006. The label reads "ZV-Heckklappe Softtouch (direkter Auswurf/keine Freigabe)". The table is for the sibling Passat and gives no coding length. Reads off in this car.',
+    sources: [VAGDATA, { label: 'vag-coding.net: Golf 5 automatic tailgate opening', url: 'https://www.vag-coding.net/vw/golf-5-1k/golf-5-1k-automatic-tailgate-opening-retrofit/' }],
+  },
   // MQB (Golf 7, Octavia III, A3 8V, Leon 5F) and MLB evo: same cluster bits (replica/vag-sources.md section 3).
   {
     id: 'mqb-needle-sweep',
@@ -587,7 +885,7 @@ export const CODING_ITEMS: CodingItem[] = [
 // source listed, and the coding length taken from whichever gives one.
 const RANK = { high: 3, medium: 2, low: 1 } as const;
 export function mergeItems(lists: CodingItem[][]): CodingItem[] {
-  const key = (i: CodingItem) => `${i.platforms.join()}|${i.module}|${i.byte}|${i.bits.join()}|${i.field?.mask ?? ''}|${i.short?.divisor ?? ''}|${i.short?.flag ?? ''}`;
+  const key = (i: CodingItem) => `${i.platforms.join()}|${i.module}|${i.byte}|${i.bits.join()}|${i.field?.mask ?? ''}|${i.short?.divisor ?? ''}|${i.short?.flag ?? ''}|${i.number ? 'number' : ''}|${i.pick ? `pick${i.pick.divisor}/${i.pick.modulo}` : ''}`;
   const out = new Map<string, CodingItem>();
   for (const list of lists) {
     for (const i of list) {
@@ -624,9 +922,12 @@ function shortValue(coding: number[]): number | null {
   return n > SHORT_MAX ? null : n;
 }
 
+// A short flag or a short-code choice: held in a module's 3-byte short code.
+export const isShortCoded = (item: Pick<CodingItem, 'short' | 'pick'>): boolean => !!item.short || !!item.pick;
+
 // A short item belongs on short-coded modules; byte and bit items on the others.
 export function fitsStyle(item: CodingItem, style: string | null | undefined): boolean {
-  return item.short ? style === 'short' : style !== 'short';
+  return isShortCoded(item) ? style === 'short' : style !== 'short';
 }
 
 // Bytes that hold a number (a percentage or a time), not switches, on a layout
@@ -651,11 +952,25 @@ const cleanPart = (p: string | null | undefined) => (p ?? '').replace(/[\s-]/g, 
 export function whyNotOffered(item: CodingItem, coding: number[] | null | undefined, ctx: FitContext = {}): string | null {
   if (item.held) return item.held;
   if (!coding || !coding.length) return 'The module has not given its coding.';
-  if (!fitsStyle(item, ctx.style)) return item.short ? 'This setting is for modules with a short code, and this one does not have one.' : 'This setting is for modules with a long coding, and this one has a short code.';
-  if (item.short) return coding.length === 3 ? null : `This setting needs a 3-byte short code, and this module has ${coding.length} bytes.`;
+  if (!fitsStyle(item, ctx.style)) return isShortCoded(item) ? 'This setting is for modules with a short code, and this one does not have one.' : 'This setting is for modules with a long coding, and this one has a short code.';
+  if (item.pick) {
+    const p = item.pick;
+    const values = p.options.map((o) => o.value);
+    if (item.number || item.short || item.field || item.bits.length || item.byte !== 0 || !Number.isInteger(p.divisor) || p.divisor < 1 || !Number.isInteger(p.modulo) || p.modulo < 2 || !values.length || new Set(values).size !== values.length || values.some((v) => !Number.isInteger(v) || v < 0 || v >= p.modulo)) return 'This setting is not described as a list of choices in the short code, so it is not offered.';
+  }
+  if (item.number) {
+    const n = item.number;
+    if (item.pick || item.short || item.field || item.bits.length || !Number.isInteger(n.min) || !Number.isInteger(n.max) || !Number.isInteger(n.step) || n.step < 1 || n.min < 0 || n.max > 0xff || n.min > n.max) return 'This setting is not described as a whole-byte number, so it is not offered.';
+    if (item.length == null) return 'This setting does not say how long the coding is, so it is not offered.';
+  }
+  if (item.pick && coding.length === 3 && shortValue(coding) == null) return 'The short code this module gave is not a valid value.';
+  if (isShortCoded(item)) return coding.length === 3 ? null : `This setting needs a 3-byte short code, and this module has ${coding.length} bytes.`;
   if (coding.length <= item.byte) return `This module's coding has ${coding.length} bytes, too short for this setting.`;
   if (item.length != null && coding.length !== item.length) return `This setting is for a ${item.length}-byte coding, and this module has ${coding.length} bytes.`;
-  if (NUMERIC_BYTES.some((n) => n.module === item.module && n.length === coding.length && n.bytes.includes(item.byte))) return `Byte ${item.byte} of this coding holds a number, not a switch.`;
+  const numeric = NUMERIC_BYTES.some((n) => n.module === item.module && n.length === coding.length && n.bytes.includes(item.byte));
+  if (item.number) {
+    if (!numeric) return `Byte ${item.byte} of this coding is not known to hold a number, so this setting is not offered.`;
+  } else if (numeric) return `Byte ${item.byte} of this coding holds a number, not a switch.`;
   if (item.parts?.length) {
     const part = cleanPart(ctx.part);
     if (!part) return 'This setting depends on the module part number, which has not been read yet.';
@@ -671,7 +986,9 @@ export function offeredItems(items: CodingItem[], codings: Record<string, number
   return items.filter((i) => itemApplies(i, codings[i.module], ctxOf(i.module)));
 }
 
+// A number setting is neither on nor off: isOn is false for it. Callers branch on item.number.
 export function isOn(item: CodingItem, coding: number[]): boolean {
+  if (item.number || item.pick) return false;
   if (item.short) {
     const n = shortValue(coding);
     if (n == null) return false;
@@ -684,6 +1001,8 @@ export function isOn(item: CodingItem, coding: number[]): boolean {
 
 // New coding with the item's bits set or cleared; everything else unchanged.
 export function withItem(item: CodingItem, coding: number[], on: boolean): number[] {
+  // A number or a choice has no on or off: nothing changes. Use withValue.
+  if (item.number || item.pick) return [...coding];
   if (item.short) {
     const n = shortValue(coding);
     if (n == null) return [...coding];
@@ -702,8 +1021,84 @@ export function withItem(item: CodingItem, coding: number[], on: boolean): numbe
   return next;
 }
 
+// The value a number setting holds in a coding, or null for any other setting or a coding too short.
+export function numberValue(item: CodingItem, coding: number[] | null | undefined): number | null {
+  if (!item.number || !coding) return null;
+  const b = coding[item.byte];
+  return Number.isInteger(b) && b >= 0 && b <= 0xff ? b : null;
+}
+
+// "80 %" or "50 s": the value with its unit.
+export const formatNumber = (n: { unit: string }, value: number): string => (n.unit ? `${value} ${n.unit}` : String(value));
+
+// Why a value is not allowed for a number setting (not a whole number, outside
+// min and max, or off the step grid). Null when it is allowed.
+export function numberProblem(item: Pick<CodingItem, 'number'>, value: number): string | null {
+  const n = item.number;
+  if (!n) return 'This setting is not a number.';
+  const range = `${n.min} to ${n.max}${n.unit ? ` ${n.unit}` : ''}${n.step > 1 ? `, in steps of ${n.step}` : ''}`;
+  if (!Number.isInteger(value)) return `${value} is not a whole number. Use ${range}.`;
+  if (value < n.min || value > n.max) return `${value} is outside ${range}.`;
+  if ((value - n.min) % n.step !== 0) return `${value} is not on the steps of ${n.step}. Use ${range}.`;
+  return null;
+}
+
+// New coding with the number setting's byte set to the value; every other byte
+// unchanged. Null when the value is not allowed or the coding has no such byte.
+export function withNumber(item: CodingItem, coding: number[], value: number): number[] | null {
+  if (!item.number || item.byte >= coding.length || numberProblem(item, value)) return null;
+  const next = [...coding];
+  next[item.byte] = value;
+  return next;
+}
+
+// The choice a short-code setting holds: the digit value, or null for any other setting or a bad short code.
+export function pickValue(item: CodingItem, coding: number[] | null | undefined): number | null {
+  if (!item.pick || !coding) return null;
+  const n = shortValue(coding);
+  return n == null ? null : Math.floor(n / item.pick.divisor) % item.pick.modulo;
+}
+
+// The choice's name; a value that is not in the list is shown as its number.
+export const formatPick = (p: NonNullable<CodingItem['pick']>, value: number): string => p.options.find((o) => o.value === value)?.label ?? String(value);
+
+// Why a value is not allowed for a choice setting (it must be one of the listed options).
+export function pickProblem(item: Pick<CodingItem, 'pick'>, value: number): string | null {
+  const p = item.pick;
+  if (!p) return 'This setting is not a list of choices.';
+  if (p.options.some((o) => o.value === value)) return null;
+  return `${value} is not one of the choices: ${p.options.map((o) => o.label).join(', ')}.`;
+}
+
+// New short code with the digit set to the choice; every other digit unchanged. Null when not allowed.
+export function withPick(item: CodingItem, coding: number[], value: number): number[] | null {
+  const n = shortValue(coding);
+  const cur = pickValue(item, coding);
+  if (!item.pick || n == null || cur == null || pickProblem(item, value)) return null;
+  const m = n + (value - cur) * item.pick.divisor;
+  if (m < 0 || m > SHORT_MAX) return null;
+  return [(m >> 16) & 0xff, (m >> 8) & 0xff, m & 0xff];
+}
+
+// A setting that holds a value (a whole-byte number or a choice) instead of a switch.
+export const isValueItem = (item: Pick<CodingItem, 'number' | 'pick'>): boolean => !!item.number || !!item.pick;
+
+// The value either kind holds in a coding, or null.
+export const currentValue = (item: CodingItem, coding: number[] | null | undefined): number | null => (item.pick ? pickValue(item, coding) : numberValue(item, coding));
+
+// The value as words: "80 %" or "Great Britain (GB)".
+export const formatValue = (item: Pick<CodingItem, 'number' | 'pick'>, value: number): string => (item.pick ? formatPick(item.pick, value) : item.number ? formatNumber(item.number, value) : String(value));
+
+// Why a value is not allowed for a value setting. Null when it is allowed.
+export const valueProblem = (item: CodingItem, value: number): string | null => (item.pick ? pickProblem(item, value) : numberProblem(item, value));
+
+// New coding with the value set; every other byte (or digit) unchanged. Null when not allowed.
+export const withValue = (item: CodingItem, coding: number[], value: number): number[] | null => (item.pick ? withPick(item, coding, value) : withNumber(item, coding, value));
+
 // Where the setting sits, for Technical lines: "byte 2, bit 4" or "digits 3 and 4, flag 2".
 export function placeLabel(item: CodingItem): string {
+  if (item.number) return `byte ${item.byte}, the whole byte`;
+  if (item.pick) return `digit ${7 - Math.round(Math.log10(item.pick.divisor))} of the 7-digit short code`;
   return item.short ? `digits 3 and 4 of the short code, flag +${String(item.short.flag).padStart(2, '0')}` : `byte ${item.byte}, ${bitsLabel(item)}`;
 }
 
@@ -717,7 +1112,9 @@ export function bitsLabel(item: CodingItem): string {
 // When on, the headlights stay on ..." or "On now: the headlights stay on
 // ...". The summary says what the
 // setting does when on; source notes stay behind Technical.
-export function stateText(item: Pick<CodingItem, 'summary'>, on: boolean): string {
+export function stateText(item: Pick<CodingItem, 'summary' | 'number' | 'pick'>, on: boolean, value?: number | null): string {
+  // A number or a choice says what the car holds: "Now 80 %. How bright ...".
+  if (item.number || item.pick) return value == null ? item.summary : `Now ${formatValue(item, value)}. ${item.summary}`;
   const what = item.summary.charAt(0).toLowerCase() + item.summary.slice(1);
   return on ? `On now: ${what}` : `Off now. When on, ${what}`;
 }

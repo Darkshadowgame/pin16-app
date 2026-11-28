@@ -1,7 +1,9 @@
 import { router, Stack, useIsFocused, useLocalSearchParams } from 'expo-router';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
-import { CodingItem, codingItemsFor, isOn, itemApplies, placeLabel, withItem } from '../../coding/items';
+import { stepValue, canStep } from '../../coding/adaptations';
+import { rawBitLabel, rawByteNumber, rawEditorRefusal, rawWithBit, rawWriteProblem, isNumericByte } from '../../coding/rawBits';
+import { CodingItem, codingItemsFor, formatNumber, isOn, itemApplies, numberValue, placeLabel, withItem, withNumber } from '../../coding/items';
 import { modulePart } from '../../coding/shared';
 import { preflightCheck } from '../../coding/preflight';
 import { groupLabels } from '../../data/groupLabels';
@@ -67,6 +69,9 @@ export default function ControlModule() {
   const [coding, setCoding] = useState<number[] | null>(null);
   const [draft, setDraft] = useState<number[] | null>(null);
   const [openByte, setOpenByte] = useState<number | null>(null);
+  // The "Every bit" section (collapsed at first) and the byte opened in it.
+  const [bitsOpen, setBitsOpen] = useState(false);
+  const [rawByte, setRawByte] = useState<number | null>(null);
   // Coding history of this car, and the "Add a coding by hand" form.
   const [history, setHistory] = useState<CodingHistory>({});
   const [byHand, setByHand] = useState<{ hex: string; when: string; note: string } | null>(null);
@@ -178,15 +183,29 @@ export default function ControlModule() {
   const original = v.codingOriginal?.[def.id];
   const changed = !!coding && !!draft && toHex(coding) !== toHex(draft);
   const knowledge = v.knowledge?.[def.id];
+  // Airbag, belt tensioner, immobiliser, engine and short-code modules: the coding is shown, never edited here.
+  const rawRefusal = coding ? rawEditorRefusal(def.id, coding, style) : null;
   const items: CodingItem[] = [...codingItemsFor(v.group, v.platform)].filter(
-    (i) => i.module === def.id && !!draft && itemApplies(i, draft, { style, part: modulePart(v, def.id) }),
+    (i) => !rawRefusal && i.module === def.id && !!draft && itemApplies(i, draft, { style, part: modulePart(v, def.id) }),
   );
-  const bitName = (byte: number, bit: number) => items.find((i) => i.byte === byte && (i.bits.includes(bit) || (!!i.field && ((i.field.mask >> bit) & 1) === 1)))?.title;
+  const bitName = (byte: number, bit: number) => {
+    const hit = items.find((i) => i.byte === byte && (!!i.number || i.bits.includes(bit) || (!!i.field && ((i.field.mask >> bit) & 1) === 1)));
+    return hit ? (hit.number ? `${hit.title} (the whole byte is the value)` : hit.title) : undefined;
+  };
   const imperial = { speed: settings.speed === 'mph', temp: settings.temp === '°F' };
   const modCode = def.code ?? (def.id === 'engine' ? '01' : def.id === 'gearbox' ? '02' : undefined);
 
   const readFaults = () => run('faults', async () => setFaults(await client.readModuleFaults(def)));
-  const clearFaults = () =>
+  const clearFaults = async () => {
+    // Held so the background auto read steps aside while faults are cleared.
+    stayAwake('clearFaults');
+    try {
+      await clearFaultsRun();
+    } finally {
+      allowSleep('clearFaults');
+    }
+  };
+  const clearFaultsRun = () =>
     run('clear', async () => {
       const wrong = await conn.verifyCar();
       if (wrong) throw new Error(wrong);
@@ -223,6 +242,10 @@ export default function ControlModule() {
     });
 
   const askWrite = async (kind: 'write' | 'restore' | 'putback', hex?: string, when?: string, typed?: boolean) => {
+    if (kind === 'write' && rawRefusal) {
+      setMessage({ tone: 'danger', text: "This module's coding is not edited here. Nothing was written to the car." });
+      return;
+    }
     const check = await preflightCheck(client);
     if (check.block) {
       setMessage({ tone: 'danger', text: check.block });
@@ -297,6 +320,18 @@ export default function ControlModule() {
         if (alive.current) setMessage({ tone: 'danger', text: `${res.restored ? 'The module did not keep the change, so Pin16 put the original coding back.' : 'The module did not keep the change and the original could not be confirmed. Tap Put back original coding.'}${note ? ` ${note}` : ''}` });
       }
     });
+
+  // One bit from the "Every bit" list, written at once through writeCoding. The refusal is checked here, so a bad bit is never sent.
+  const flipBit = (byte: number, bit: number, on: boolean) => {
+    if (!coding) return;
+    const target = rawWithBit(def.id, coding, byte, bit, on, style);
+    if (!target) {
+      setMessage({ tone: 'danger', text: `${rawWriteProblem(def.id, coding, byte, bit, style) ?? 'This bit cannot be written.'} Nothing was written to the car.` });
+      return;
+    }
+    tap();
+    void writeCoding(target, `byte ${byte} bit ${bit} set ${on ? 'on' : 'off'}`);
+  };
 
   const toggleBit = (byte: number, bit: number, on: boolean) => {
     if (!draft) return;
@@ -458,9 +493,40 @@ export default function ControlModule() {
           {tab === 'coding' ? (
             coding && draft ? (
               <>
+                {rawRefusal ? (
+                  <Group header="Coding">
+                    <View style={styles.pad}>
+                      <Text selectable style={[type.body, { color: t.text, fontFamily: MONO }]}>
+                        {toHex(coding)}
+                      </Text>
+                      <Text style={[type.sub, { color: t.muted, marginTop: space.sm }]}>This module's coding is not edited here.</Text>
+                    </View>
+                  </Group>
+                ) : null}
+
                 {items.length ? (
-                  <Group header="Settings in this coding" help={SECTIONS.moduleSettings} footer="Switches change nothing in the car until you tap Save to the car. 'Not tested on this car' ones come from a single source.">
+                  <Group header="Settings in this coding" help={SECTIONS.moduleSettings} footer="Switches and steppers change nothing in the car until you tap Save to the car. 'Not tested on this car' ones come from a single source.">
                     {items.map((i, k) => {
+                      // A number setting: lower and higher on its own steps; the draft changes, nothing is written until Save to the car.
+                      if (i.number) {
+                        const now = numberValue(i, draft);
+                        const was = numberValue(i, coding);
+                        if (now == null) return null;
+                        const num = i.number;
+                        const step = (d: 1 | -1) => setDraft(withNumber(i, draft, stepValue(num, now, d)) ?? draft);
+                        return (
+                          <ListRow
+                            key={i.id}
+                            control
+                            first={!k}
+                            title={now !== was ? `${i.title} (changed)` : i.title}
+                            subtitle={`${placeLabel(i).charAt(0).toUpperCase() + placeLabel(i).slice(1)}, ${num.min} to ${num.max} ${num.unit}${i.confidence === 'low' ? ' · not tested on this car' : ''}`}
+                            right={<Stepper label={i.title} value={formatNumber(num, now)} disabled={!!busy} noLower={!canStep(num, now, -1)} noHigher={!canStep(num, now, 1)} onStep={step} />}
+                          />
+                        );
+                      }
+                      // A pick setting has no picker here; it is set in Customise.
+                      if (i.pick) return null;
                       const on = isOn(i, draft);
                       const was = isOn(i, coding);
                       return (
@@ -478,7 +544,7 @@ export default function ControlModule() {
                   </Group>
                 ) : null}
 
-                {changed ? (
+                {changed && !rawRefusal ? (
                   <View style={[styles.ready, { backgroundColor: t.accentSoft }]}>
                     <Text style={[type.heading, { color: t.accentText, flex: 1 }]}>
                       {busy === 'write' ? WRITING : `${draft.reduce((n, b, k) => n + (b !== coding[k] ? 1 : 0), 0)} byte${draft.reduce((n, b, k) => n + (b !== coding[k] ? 1 : 0), 0) === 1 ? '' : 's'} changed, not saved yet`}
@@ -487,6 +553,7 @@ export default function ControlModule() {
                   </View>
                 ) : null}
 
+                {!rawRefusal ? (
                 <Group
                   header="All bytes"
                   help={SECTIONS.moduleBytes}
@@ -532,13 +599,61 @@ export default function ControlModule() {
                     ) : null}
                   </View>
                 </Group>
+                ) : null}
 
                 <View style={{ gap: space.sm, marginBottom: space.xl }}>
-                  <Button label="Save to the car" icon="content-save-outline" disabled={!changed || !!busy} busy={busy === 'write'} onPress={() => askWrite('write')} />
+                  {!rawRefusal ? <Button label="Save to the car" icon="content-save-outline" disabled={!changed || !!busy} busy={busy === 'write'} onPress={() => askWrite('write')} /> : null}
                   {busy === 'write' ? <Text style={[type.sub, { color: t.muted, textAlign: 'center' }]}>{WRITING}</Text> : null}
-                  {changed ? <Button label="Undo my changes" variant="ghost" onPress={() => setDraft(coding)} /> : null}
+                  {changed && !rawRefusal ? <Button label="Undo my changes" variant="ghost" onPress={() => setDraft(coding)} /> : null}
                   {original && original !== toHex(coding) ? <Button label="Put back original coding" variant="secondary" disabled={!!busy} onPress={() => askWrite('restore')} /> : null}
                 </View>
+
+                {!rawRefusal ? (
+                  <Group header="Every bit (advanced)">
+                    <View style={styles.pad}>
+                      <Text style={[type.sub, { color: t.muted }]}>Advanced. Each switch is 1 bit of this module's coding and writes to the car at once. Coding history can put it back.</Text>
+                    </View>
+                    <ListRow first icon={bitsOpen ? 'chevron-up' : 'chevron-down'} iconColour="grey" title={bitsOpen ? 'Hide every bit' : 'Show every bit'} subtitle={`${coding.length} bytes`} expanded={bitsOpen} onPress={() => setBitsOpen(!bitsOpen)} />
+                    {bitsOpen ? <Notice tone="info" icon="information-outline" text={changed ? 'Save or undo your changes above first. These switches write at once.' : 'These switches write to the car at once.'} /> : null}
+                    {bitsOpen
+                      ? coding.map((b, byteNo) => {
+                          const numeric = isNumericByte(def.id, coding.length, byteNo);
+                          const numberRow = numeric ? rawByteNumber(v.platform, def.id, coding.length, byteNo) : null;
+                          const open = rawByte === byteNo;
+                          return (
+                            <View key={byteNo}>
+                              <ListRow
+                                title={`Byte ${byteNo}`}
+                                subtitle={numeric ? (numberRow ? `A number: ${b} (hex ${hex2(b)}). Change it in Customise.` : 'Not named. A number, not switches.') : undefined}
+                                value={hex2(b)}
+                                mono
+                                expanded={numeric ? undefined : open}
+                                noChevron={numeric}
+                                onPress={numeric ? undefined : () => setRawByte(open ? null : byteNo)}
+                              />
+                              {open && !numeric
+                                ? [7, 6, 5, 4, 3, 2, 1, 0].map((bit) => {
+                                    const label = rawBitLabel(v.platform, def.id, coding.length, byteNo, bit);
+                                    const parts = [`Bit ${bit}`, label.title ? null : 'Nothing known about this bit', label.held ? `Held: ${label.held}` : null, label.inverted ? 'The setting is on when this bit is clear' : null].filter(Boolean);
+                                    return (
+                                      <ToggleRow
+                                        key={bit}
+                                        title={label.title ?? 'Not named'}
+                                        subtitle={parts.join(' · ')}
+                                        badge={label.unconfirmed ? 'Unconfirmed' : undefined}
+                                        value={(b & (1 << bit)) !== 0}
+                                        disabled={!!busy || changed}
+                                        onChange={(x) => flipBit(byteNo, bit, x)}
+                                      />
+                                    );
+                                  })
+                                : null}
+                            </View>
+                          );
+                        })
+                      : null}
+                  </Group>
+                ) : null}
 
                 <Group
                   header="Coding history"
@@ -611,7 +726,7 @@ export default function ControlModule() {
           if (c?.kind === 'clear') clearFaults();
           else if (c?.kind === 'restore' && original) writeCoding(original.match(/../g)!.map((h) => parseInt(h, 16)), 'original coding put back', c.note);
           else if (c?.kind === 'putback' && c.hex) writeCoding(c.hex.match(/../g)!.map((h) => parseInt(h, 16)), 'earlier coding put back', c.note);
-          else if (c?.kind === 'write' && draft) writeCoding(draft, 'coding saved', c.note);
+          else if (c?.kind === 'write' && draft && !rawRefusal) writeCoding(draft, 'coding saved', c.note);
         }}
       />
     </Screen>

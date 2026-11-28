@@ -45,9 +45,10 @@ export function settingCategory(s: { id: string; title: string; category?: strin
 
 // Where a setting sits and what it does there: module, coding length, byte,
 // bits, field values or short-coding flag. Two items with the same place and
-// the same effect are the same setting.
-type Placed = { module: string; byte: number; bits: number[]; length?: number; field?: { mask: number; on: number; off: number }; short?: { divisor: number; modulo: number; flag: number } };
-const placeKey = (i: Placed) => `${i.module}|${i.length ?? ''}|${i.byte}|${i.bits.join()}|${i.field ? `${i.field.mask}/${i.field.on}/${i.field.off}` : ''}|${i.short ? `${i.short.divisor}/${i.short.modulo}/${i.short.flag}` : ''}`;
+// the same effect are the same setting. A number setting (the whole byte) is
+// never the same as a switch on that byte.
+type Placed = { module: string; byte: number; bits: number[]; length?: number; number?: { min: number; max: number; step: number; unit: string }; pick?: { divisor: number; modulo: number }; field?: { mask: number; on: number; off: number }; short?: { divisor: number; modulo: number; flag: number } };
+const placeKey = (i: Placed) => `${i.module}|${i.length ?? ''}|${i.byte}|${i.bits.join()}|${i.field ? `${i.field.mask}/${i.field.on}/${i.field.off}` : ''}|${i.short ? `${i.short.divisor}/${i.short.modulo}/${i.short.flag}` : ''}|${i.number ? 'number' : ''}|${i.pick ? `pick${i.pick.divisor}/${i.pick.modulo}` : ''}`;
 
 // Several sources can describe the very same setting: keep the first of each.
 // Distinct settings that share a short code (brake pad warning, washer fluid

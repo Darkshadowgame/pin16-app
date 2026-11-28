@@ -780,7 +780,7 @@ export const SECTIONS: Record<string, Help> = {
     what: 'Settings documented by public sources for your car’s platform, and the ones you taught Pin16.',
     how: [
       'Tap a name for details, the byte and bit, and the source.',
-      'Reported by owners means one community source. Check the result in the car.',
+      'One source means one community source. Check the result in the car.',
       'Unconfirmed means one vague source. Pin16 writes the change and checks the module kept it. Switch the ignition off and on and check the car. If you see no effect, switch it back off.',
       'Did not take shows when the module refused the change and the original coding was put back.',
       'A switch stays grey until its module has answered.',

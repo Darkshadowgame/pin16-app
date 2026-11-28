@@ -3,8 +3,8 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Linking, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { PinMark } from '../../brand/PinMark';
 import { LinkLost } from '../../obd/transport';
-import { AdaptationItem, adaptationKey, adaptationResultText, adaptationsFor, formatAdaptation, inRange, isAdaptationKey, isWideRow, itemForKey, typedValueCheck, valueFromHex, valueHex } from '../../coding/adaptations';
-import { CodingItem, codingItemsFor, FitContext, isOn, itemApplies, placeLabel, stateText, whyNotOffered, withItem } from '../../coding/items';
+import { AdaptationItem, adaptationKey, adaptationResultText, adaptationsFor, canStep, formatAdaptation, inRange, isAdaptationKey, isWideRow, itemForKey, stepValue, typedValueCheck, valueFromHex, valueHex } from '../../coding/adaptations';
+import { CodingItem, codingItemsFor, currentValue, FitContext, formatValue, isOn, isValueItem, itemApplies, placeLabel, stateText, valueProblem, whyNotOffered, withItem, withValue } from '../../coding/items';
 import { offeredSettings } from '../../coding/offered';
 import { dedupeItems, groupByCategory, isUnconfirmed, SETTING_CATEGORIES, SettingCategory, settingCategory } from '../../coding/categories';
 import { fromHex, LearnedSetting, learnedIsOn, learnedKeys, learnedModules, splitKey, withLearned } from '../../coding/learn';
@@ -22,11 +22,12 @@ import { CodingHistory } from '../../coding/history';
 import { loadCodingHistory, onCodingHistory, recordCodings } from '../../coding/historyStore';
 import { useConnection } from '../../state';
 import { space, type, useTheme } from '../../theme';
-import { TOOLS, announce, announceResult, liveRegion, Button, Chips, ConfirmSheet, Field, GlowCard, Group, Icon, ListRow, NeedsConnection, Notice, Pill, Screen, SearchField, SheetPage, success, Toggle, tool } from '../../ui';
+import { TOOLS, announce, announceResult, liveRegion, Button, Chips, ConfirmSheet, Field, GlowCard, Group, Icon, ListRow, NeedsConnection, Notice, Pill, Screen, SearchField, SheetPage, Stepper, success, Toggle, tool } from '../../ui';
 import { SettingRow } from '../../components/SettingRow';
 import { TryResult, useGarage, vehicleTitle } from '../../vehicle/garage';
 import { SECTIONS } from '../../help';
 import { sendLogNow } from '../../share/sendLog';
+import { allowSleep, stayAwake } from '../../keepAwake';
 
 const CATEGORY_ICON: Record<string, React.ComponentProps<typeof Icon>['name']> = {
   'Most popular': 'star-outline',
@@ -44,6 +45,8 @@ const CATEGORY_ICON: Record<string, React.ComponentProps<typeof Icon>['name']> =
 // Forget and Put back ask first, through the confirm sheet.
 type Pending =
   | { kind: 'item'; item: CodingItem; on: boolean }
+  // A value setting (a whole-byte number or a choice in a short code): written at once, after the same fit and value checks.
+  | { kind: 'value'; item: CodingItem; value: number }
   | { kind: 'learned'; setting: LearnedSetting; on: boolean }
   | { kind: 'forget'; setting: LearnedSetting }
   | { kind: 'restore'; module: string; top?: boolean }
@@ -89,7 +92,7 @@ export default function Customise() {
     ? dedupeItems(codingItemsFor(v.group, v.platform))
     : [];
   // Knowledge base notes not already a sourced setting.
-  const kbNotes = kbItems.filter((n) => !items.some((i) => i.module === n.module && i.byte === n.byte && i.bits.join() === n.bits.join()));
+  const kbNotes = kbItems.filter((n) => !items.some((i) => !isValueItem(i) && i.module === n.module && i.byte === n.byte && i.bits.join() === n.bits.join()));
   const learned = v?.learned ?? [];
   // Settings learned on the owner's other cars that have the same module.
   const borrowed = v ? sharedLearned(v, garage.vehicles) : [];
@@ -121,6 +124,8 @@ export default function Customise() {
   const [query, setQuery] = useState('');
   const [panel, setPanel] = useState<'backups' | 'history' | null>(() => (wantRestore || wantAdaptRestore ? 'backups' : null));
   const [pickKey, setPickKey] = useState<string | null>(null);
+  // The number setting (a whole coding byte) whose value sheet is open.
+  const [numId, setNumId] = useState<string | null>(null);
   const [openId, setOpenId] = useState<string | null>(null);
   // The setting whose Technical details (source notes, byte, bits) are open.
   const [techId, setTechId] = useState<string | null>(null);
@@ -169,6 +174,10 @@ export default function Customise() {
   // earlier on this connection is used as it is.
   const read = useCallback(async (force = false) => {
     if (!client || !client.supportsModules) return;
+    // Held so the background auto read steps aside during the read.
+    stayAwake('customise');
+    try {
+    await (async () => {
     setReading(true);
     setChecked(new Set());
     written.current.clear();
@@ -201,6 +210,10 @@ export default function Customise() {
       garage.update(v.vin, { codingCache: { ...(garage.latest(v.vin)?.codingCache ?? {}), ...cache } });
       // One entry per coding that differs from the newest kept (src/coding/history.ts).
       void recordCodings(v.vin, Object.entries(cache).filter(([k]) => !k.includes(':')).map(([key, hex]) => ({ key, hex, source: 'read' as const })));
+    }
+    })();
+    } finally {
+      allowSleep('customise');
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [client, moduleIds.join()]);
@@ -288,23 +301,26 @@ export default function Customise() {
     }
     // The result shows under the switch that was used; a put back shows beside
     // Put back original, or at the top when it was opened from the change timeline.
-    let runId = p.kind === 'item' ? p.item.id : p.kind === 'restore' ? (p.top ? undefined : RESTORE_MSG) : p.setting.id;
+    let runId = p.kind === 'item' || p.kind === 'value' ? p.item.id : p.kind === 'restore' ? (p.top ? undefined : RESTORE_MSG) : p.setting.id;
     if (p.kind === 'forget') {
       await garage.update(v.vin, { learned: learned.filter((s) => s.id !== p.setting.id) });
       return;
     }
-    const ids = p.kind === 'item' ? [p.item.module] : p.kind === 'learned' ? learnedKeys(p.setting) : [p.module];
+    const ids = p.kind === 'item' || p.kind === 'value' ? [p.item.module] : p.kind === 'learned' ? learnedKeys(p.setting) : [p.module];
     if (ids.some((id) => !codings[id])) return;
     // The write itself checks the setting fits the coding read from the car, even if a screen offered it.
-    if (p.kind === 'item') {
-      const why = whyNotOffered(p.item, codings[p.item.module], fitOf(p.item.module));
+    if (p.kind === 'item' || p.kind === 'value') {
+      // A value goes through the same gate, then its own range, step or choice check.
+      const why = whyNotOffered(p.item, codings[p.item.module], fitOf(p.item.module)) ?? (p.kind === 'value' ? valueProblem(p.item, p.value) : isValueItem(p.item) ? 'This setting holds a value, not a switch.' : null);
       if (why) {
         if (alive.current) setMessage({ id: runId, tone: 'danger', text: `${p.item.title} was not changed. ${why} Nothing was written to the car.` });
         return;
       }
     }
-    setBusy(p.kind === 'item' ? p.item.id : p.kind === 'learned' ? p.setting.id : p.top ? `restore-top-${p.module}` : `restore-${p.module}`);
+    setBusy(p.kind === 'item' || p.kind === 'value' ? p.item.id : p.kind === 'learned' ? p.setting.id : p.top ? `restore-top-${p.module}` : `restore-${p.module}`);
     setMessage(null);
+    // Held so the background auto read steps aside during the write.
+    stayAwake('customise');
     try {
       // The saved car must be the connected car.
       const wrong = await conn.verifyCar();
@@ -324,8 +340,11 @@ export default function Customise() {
         if (alive.current) setMessage({ id: runId, tone: 'danger', text: ORIGINAL_NOT_SAVED });
         return;
       }
+      const beforeValue = p.kind === 'value' ? currentValue(p.item, codings[p.item.module]) : null;
       const what =
-        p.kind === 'item'
+        p.kind === 'value'
+          ? `${p.item.title} set to ${formatValue(p.item, p.value)}`
+          : p.kind === 'item'
           ? `${p.item.title} ${p.on ? 'on' : 'off'}`
           : p.kind === 'learned'
             ? `${p.setting.title} ${p.on ? 'on' : 'off'}`
@@ -342,17 +361,23 @@ export default function Customise() {
         // The coding the write starts from, then (below) what the module holds after it.
         if (!did) void recordCodings(v.vin, [{ key: moduleId, hex: toHex(before), source: 'read' }]);
         const after =
-          p.kind === 'item'
+          p.kind === 'value'
+            ? withValue(p.item, before, p.value)
+            : p.kind === 'item'
             ? withItem(p.item, before, p.on)
             : p.kind === 'learned'
               ? withLearned(p.setting, moduleId, before, p.on)
               : (originals[moduleId] ?? toHex(before)).match(/../g)!.map((h) => parseInt(h, 16));
+        if (!after) {
+          failed = 'The value was not allowed for this setting, so nothing was written to the car.';
+          break;
+        }
         // A put back must be the same length as what the module holds now.
         if (p.kind === 'restore' && after.length !== before.length) {
           failed = `${def.name} now holds ${before.length} bytes, and the original is ${after.length} bytes, so it was not put back. Nothing was written to the car.`;
           break;
         }
-        const login = p.kind === 'learned' ? p.setting.login : p.kind === 'item' ? p.item.login : undefined;
+        const login = p.kind === 'learned' ? p.setting.login : p.kind === 'item' || p.kind === 'value' ? p.item.login : undefined;
         let res: Awaited<ReturnType<typeof client.writeCoding>>;
         try {
           res = did ? await client.writeDid(def, did, before, after, login) : await client.writeCoding(def, before, after, login);
@@ -375,7 +400,7 @@ export default function Customise() {
           if (!did) void recordCodings(v.vin, [{ key: moduleId, hex: toHex(res.coding), source: res.ok ? 'written' : 'read' }]);
         }
         if (!res.ok) {
-          if (settingId && p.kind !== 'restore' && p.on) await mark(settingId, 'refused');
+          if (settingId && p.kind !== 'restore' && p.kind !== 'value' && p.on) await mark(settingId, 'refused');
           // The module holds something other than before: that is a change too.
           if (res.coding && toHex(res.coding) !== toHex(before)) done.push({ key: moduleId, before, after: res.coding });
           failed = res.restored
@@ -401,8 +426,8 @@ export default function Customise() {
         notes: failed ? `Part changed: ${what}. ${notes.join('; ') || 'A module did not keep the change'}. Check it in Customise.` : p.kind === 'restore' ? `${what}.` : `Changed: ${what}. Put it back in Customise, with Put back original.`,
       });
       // One line per module for the change timeline, with the backup each came from.
-      const setting = p.kind === 'item' ? p.item.title : p.kind === 'learned' ? p.setting.title : 'Put back original';
-      const value = p.kind === 'restore' ? undefined : { from: p.on ? 'Off' : 'On', to: p.on ? 'On' : 'Off' };
+      const setting = p.kind === 'item' || p.kind === 'value' ? p.item.title : p.kind === 'learned' ? p.setting.title : 'Put back original';
+      const value = p.kind === 'restore' ? undefined : p.kind === 'value' ? { from: beforeValue == null ? '' : formatValue(p.item, beforeValue), to: formatValue(p.item, p.value) } : { from: p.on ? 'Off' : 'On', to: p.on ? 'On' : 'Off' };
       await addHistory({
         vin: v.vin,
         kind: 'change',
@@ -436,6 +461,7 @@ export default function Customise() {
       // What the module answered goes to the findings store, so a change that
       // did not take can be looked at afterwards.
       void sendLogNow('Customise change', v);
+      allowSleep('customise');
       if (alive.current) setBusy(null);
     }
   };
@@ -603,7 +629,7 @@ export default function Customise() {
   const origValues: Record<string, number[] | null> = Object.fromEntries(Object.keys(originals).filter((k) => !isAdaptationKey(k)).map((k) => [k, fromHex(originals[k])]));
   const entries: Entry[] = [
     ...available.map(
-      (i): Entry => ({ kind: 'item', id: i.id, title: i.title, cat: settingCategory(i), changed: !!origValues[i.module] && itemApplies(i, origValues[i.module], fitOf(i.module)) && isOn(i, origValues[i.module]!) !== isOn(i, codings[i.module]!), item: i }),
+      (i): Entry => ({ kind: 'item', id: i.id, title: i.title, cat: settingCategory(i), changed: !!origValues[i.module] && itemApplies(i, origValues[i.module], fitOf(i.module)) && (isValueItem(i) ? currentValue(i, origValues[i.module]) !== currentValue(i, codings[i.module]) : isOn(i, origValues[i.module]!) !== isOn(i, codings[i.module]!)), item: i }),
     ),
     ...offered.adapts.map((a): Entry => {
       const o = originals[adaptationKey(a)];
@@ -623,7 +649,32 @@ export default function Customise() {
   const writingLine = (on: boolean) => (on ? <Text style={[type.small, { color: t.muted, marginTop: 4 }]}>{WRITING}</Text> : null);
   const spinner = <ActivityIndicator color={t.accentText} accessibilityLabel="Writing" />;
 
+  // A value setting (a number or a choice): the row shows what the car holds; it opens a sheet to type, step or pick a value, which writes at once.
+  const renderNumber = (i: CodingItem, first: boolean) => {
+    const cur = currentValue(i, codings[i.module]);
+    const working = busy === i.id;
+    return (
+      <SettingRow
+        key={i.id}
+        first={first}
+        title={i.title}
+        value={cur == null ? undefined : formatValue(i, cur)}
+        hint={`${stateText(i, false, cur)} ${i.pick ? 'Opens a list of choices.' : 'Opens a field to type a value.'}`}
+        disabled={!!busy || cur == null || !checked.has(i.module)}
+        onPress={() => {
+          setMessage(null);
+          setNumId(i.id);
+        }}
+        tags={tagRow([isUnconfirmed(i) ? <Pill key="u" text="Unconfirmed" /> : null, i.confidence === 'medium' ? <Pill key="m" text="One source" /> : null, tried[i.id] ? <TriedPill key="t" r={tried[i.id]} /> : null])}
+      >
+        {messageLine(i.id)}
+        {writingLine(working)}
+      </SettingRow>
+    );
+  };
+
   const renderItem = (i: CodingItem, first: boolean) => {
+    if (isValueItem(i)) return renderNumber(i, first);
     const on = isOn(i, codings[i.module]!);
     const working = busy === i.id;
     const open = openId === i.id;
@@ -636,7 +687,7 @@ export default function Customise() {
         hint={stateText(i, on)}
         expanded={open}
         onTitlePress={() => setOpenId(open ? null : i.id)}
-        tags={tagRow([isUnconfirmed(i) ? <Pill key="u" text="Unconfirmed" /> : null, i.confidence === 'medium' ? <Pill key="m" text="Reported by owners" /> : null, tried[i.id] ? <TriedPill key="t" r={tried[i.id]} /> : null])}
+        tags={tagRow([isUnconfirmed(i) ? <Pill key="u" text="Unconfirmed" /> : null, i.confidence === 'medium' ? <Pill key="m" text="One source" /> : null, tried[i.id] ? <TriedPill key="t" r={tried[i.id]} /> : null])}
         control={working ? spinner : <Toggle value={on} disabled={!!busy || !checked.has(i.module)} label={i.title} onChange={(next) => run({ kind: 'item', item: i, on: next })} />}
       >
         {open ? (
@@ -805,6 +856,33 @@ export default function Customise() {
     if (x !== cur) void changeAdaptRef.current?.(a, x);
   };
 
+  // The sheet of a number setting (a whole coding byte): a typed value or lower and higher, checked
+  // against the row's own min, max and step, then written at once like a switch.
+  const numItem = numId ? available.find((i) => i.id === numId && isValueItem(i)) : undefined;
+  const numCur = numItem ? currentValue(numItem, codings[numItem.module]) : null;
+  const numDraftKey = numItem ? `num:${numItem.id}` : '';
+  const numText = numItem && numCur != null ? (drafts[numDraftKey] ?? String(numCur)) : '';
+  const numTyped = /^[0-9]+$/.test(numText.trim()) ? Number(numText.trim()) : null;
+  const stepNumber = (i: CodingItem, base: number, d: 1 | -1) => !i.number || setDrafts((x) => ({ ...x, [`num:${i.id}`]: String(stepValue(i.number!, base, d)) }));
+  const applyNumber = (i: CodingItem, text: string, cur: number) => {
+    if (!i.number) return;
+    setDrafts((d) => {
+      const { [`num:${i.id}`]: _gone, ...rest } = d;
+      return rest;
+    });
+    if (!text.trim()) {
+      setNumId(null);
+      return;
+    }
+    const check = typedValueCheck(i.number!, text.trim());
+    if (!check.ok) {
+      setMessage({ id: i.id, tone: 'danger', text: `${check.text} Nothing was sent.` });
+      return;
+    }
+    setNumId(null);
+    if (check.value !== cur) void run({ kind: 'value', item: i, value: check.value });
+  };
+
   return (
     <Screen>
       {items.length || learned.length ? (
@@ -934,7 +1012,7 @@ export default function Customise() {
         </Group>
       ))}
 
-      {anyUnconfirmed ? <Text style={[type.small, { color: t.muted, marginHorizontal: space.lg, marginBottom: space.xl }]}>Unconfirmed: one vague source. Pin16 writes the change and checks the module kept it. Switch it back if you see no effect.</Text> : null}
+      {anyUnconfirmed ? <Text style={[type.small, { color: t.muted, marginHorizontal: space.lg, marginBottom: space.xl }]}>Unconfirmed: one vague source. Pin16 writes the change and checks the module kept it. Put it back if you see no effect.</Text> : null}
 
       {entries.length && !visible.length ? (
         <Text style={[type.sub, { color: t.muted, marginHorizontal: space.lg, marginBottom: space.xl }]}>
@@ -1070,6 +1148,98 @@ export default function Customise() {
               </Text>
             ) : null}
             {adaptDetails(pickA, pickCur)}
+          </ScrollView>
+        ) : null}
+      </SheetPage>
+
+      <SheetPage
+        visible={!!numItem}
+        title={numItem?.title ?? ''}
+        onCancel={() => {
+          if (numItem) setDrafts(({ [numDraftKey]: _gone, ...rest }) => rest);
+          setNumId(null);
+        }}
+        onDone={numItem?.number && numCur != null ? () => applyNumber(numItem, numText, numCur) : undefined}
+        doneLabel="Set"
+      >
+        {numItem && numCur != null ? (
+          <ScrollView contentContainerStyle={{ padding: space.lg, paddingBottom: space.xxl }} keyboardShouldPersistTaps="handled">
+            <Text style={[type.sub, { color: t.muted, marginBottom: space.md }]}>{stateText(numItem, false, numCur)}</Text>
+            {numItem.number ? (
+              <>
+                <View style={{ alignItems: 'center', marginBottom: space.md }}>
+                  <Stepper
+                    label={numItem.title}
+                    value={formatValue(numItem, numTyped ?? numCur)}
+                    width={96}
+                    disabled={!!busy}
+                    noLower={!canStep(numItem.number, numTyped ?? numCur, -1)}
+                    noHigher={!canStep(numItem.number, numTyped ?? numCur, 1)}
+                    onStep={(d) => stepNumber(numItem, numTyped ?? numCur, d)}
+                  />
+                </View>
+                <Field
+                  value={numText}
+                  onChange={(x) => setDrafts((d) => ({ ...d, [numDraftKey]: x.replace(/[^0-9]/g, '').slice(0, String(numItem.number!.max).length) }))}
+                  keyboard="number-pad"
+                  number
+                  editable={!busy}
+                  accessibilityLabel={`${numItem.title}, ${numItem.number.min} to ${numItem.number.max} ${numItem.number.unit}`}
+                  placeholder={`${numItem.number.min} to ${numItem.number.max} ${numItem.number.unit}`}
+                  style={{ marginBottom: space.lg }}
+                />
+              </>
+            ) : numItem.pick ? (
+              <Group header={`Now ${formatValue(numItem, numCur)}`}>
+                {numItem.pick.options.map((o, n) => (
+                  <ListRow
+                    key={o.value}
+                    first={n === 0}
+                    title={o.label}
+                    selected={o.value === numCur}
+                    noChevron
+                    disabled={!!busy}
+                    onPress={() => {
+                      setNumId(null);
+                      if (o.value !== numCur) void run({ kind: 'value', item: numItem, value: o.value });
+                    }}
+                  />
+                ))}
+              </Group>
+            ) : null}
+            <Text style={[type.small, { color: t.muted, marginTop: 4 }]}>Writes to the car at once.</Text>
+            {messageLine(numItem.id)}
+            <Pressable accessibilityRole="button" accessibilityState={{ expanded: techId === numItem.id }} hitSlop={6} onPress={() => setTechId(techId === numItem.id ? null : numItem.id)} style={styles.link}>
+              <Text style={[type.small, { color: t.accentText }]}>{techId === numItem.id ? 'Hide technical' : 'Technical'}</Text>
+            </Pressable>
+            {techId === numItem.id ? (
+              <>
+                {numItem.note ? <Text style={[type.small, { color: t.muted, marginTop: 4 }]}>{numItem.note}</Text> : null}
+                <Text style={[type.small, { color: t.muted, marginTop: 4 }]}>
+                  {defOf(numItem.module)?.name ?? numItem.module}, {placeLabel(numItem)}.{numItem.number ? ` ${numItem.number.min} to ${numItem.number.max} ${numItem.number.unit}, steps of ${numItem.number.step}.` : ''}
+                </Text>
+                <Pressable accessibilityRole={numItem.sources[0].url ? 'link' : 'text'} disabled={!numItem.sources[0].url} hitSlop={6} onPress={() => numItem.sources[0].url && Linking.openURL(numItem.sources[0].url)} style={styles.link}>
+                  <Text style={[type.small, { color: numItem.sources[0].url ? t.accentText : t.muted }]}>Source: {numItem.sources[0].label}</Text>
+                </Pressable>
+              </>
+            ) : null}
+            {(() => {
+              const orig = currentValue(numItem, origValues[numItem.module]);
+              return orig != null && orig !== numCur && itemApplies(numItem, origValues[numItem.module], fitOf(numItem.module)) ? (
+                <Pressable
+                  accessibilityRole="button"
+                  hitSlop={6}
+                  disabled={!!busy}
+                  onPress={() => {
+                    setNumId(null);
+                    void run({ kind: 'value', item: numItem, value: orig });
+                  }}
+                  style={styles.link}
+                >
+                  <Text style={[type.small, { color: t.accentText }]}>Set to original ({formatValue(numItem, orig)})</Text>
+                </Pressable>
+              ) : null;
+            })()}
           </ScrollView>
         ) : null}
       </SheetPage>

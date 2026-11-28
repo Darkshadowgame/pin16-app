@@ -156,6 +156,13 @@ export { MODULES } from './modules';
 
 const MODULES_BY_ID = new Map(MODULES.map((m) => [m.id, m]));
 
+// Modules whose coding this app never writes, on any path (a coding item, the
+// byte grid, the Every bit editor, Put back original or coding history): the
+// airbags and belt tensioners (restraint system), the immobiliser and the
+// engine. Mirrors RAW_REFUSED_MODULES in src/coding/rawBits.ts; a test asserts
+// the two lists stay the same, and the guard sits in writeCoding and writeDid.
+export const CODING_WRITE_REFUSED = ['vag-15', 'vag-8f', 'vag-90', 'vag-25', 'engine', 'vag-01', 'vag-11', 'ford-rcm', 'mazda-rcm', 'ford-ocsm'];
+
 // Refusals that a change of diagnostic session can fix (see describeNrc).
 const SESSION_REFUSAL = /not support|not in the right state|this mode/i;
 
@@ -1199,9 +1206,25 @@ export class ElmClient {
   }
 
   private exclusive<T>(fn: () => Promise<T>): Promise<T> {
+    this.pendingJobs++;
     const run = this.lockTail.then(fn, fn);
     this.lockTail = run.catch(() => undefined);
+    const done = () => {
+      this.pendingJobs--;
+    };
+    run.then(done, done);
     return run;
+  }
+
+  // Module conversations running or waiting for the lock. Background reads
+  // (src/learn/autoRead.ts) use it to step aside for a screen's own work.
+  private pendingJobs = 0;
+  get queuedJobs(): number {
+    return this.pendingJobs;
+  }
+  // Only the jobs waiting behind the one running.
+  get waitingJobs(): number {
+    return Math.max(0, this.pendingJobs - 1);
   }
 
   private restoreLocked(): Promise<void> {
@@ -2373,6 +2396,7 @@ export class ElmClient {
   //   the coding write without them); 2E 0600 new coding; 22 0600 read back.
   // A read-back that differs puts the original coding straight back.
   async writeCoding(def: ModuleDef, before: number[], after: number[], loginCode?: number): Promise<CodingWrite> {
+    if (CODING_WRITE_REFUSED.includes(def.id)) throw new ObdError('This module’s coding is not changed by this app. Nothing was written.');
     const tp = this.tp20Coding.get(def.id);
     if (tp && this.winner.get(def.id)?.via === 'tp20') {
       if (before.length !== after.length) throw new ObdError('The new value is a different length. Nothing was changed.');
@@ -2413,6 +2437,7 @@ export class ElmClient {
   // module did not keep the new one. A login code is sent only if the module
   // asks for one.
   async writeDid(def: ModuleDef, did: string, before: number[], after: number[], loginCode?: number): Promise<CodingWrite> {
+    if (CODING_WRITE_REFUSED.includes(def.id)) throw new ObdError('This module’s coding is not changed by this app. Nothing was written.');
     if (before.length !== after.length) throw new ObdError('The new value is a different length. Nothing was changed.');
     return this.withModule(def, async (): Promise<CodingWrite> => {
       await this.uds('1003', 3000);

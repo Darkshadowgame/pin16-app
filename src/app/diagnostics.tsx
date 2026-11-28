@@ -289,6 +289,8 @@ export default function Diagnostics() {
     setConfirm(null);
     if (!client) return;
     setBusy('clear');
+    // Held so the background auto read steps aside while faults are cleared.
+    stayAwake('clearFaults');
     setError(null);
     setMessage(null);
     try {
@@ -371,6 +373,7 @@ export default function Diagnostics() {
     } catch (e) {
       if (alive.current) setError(`Clearing stopped: ${e instanceof Error ? e.message : String(e)}. If a module refuses, switch the engine off, leave the ignition on and try again.`);
     } finally {
+      allowSleep('clearFaults');
       if (alive.current) setBusy(null);
     }
   };

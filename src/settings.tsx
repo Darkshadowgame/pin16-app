@@ -29,6 +29,8 @@ export interface Settings {
   alertSounds: boolean;
   // Keep Learn my car and other long reads going with the app in the background.
   backgroundRuns: boolean;
+  // Read every module by itself after connecting (src/learn/autoRead.ts).
+  autoRead: boolean;
 }
 
 // The phone's region (for example GB from en-GB), or null.
@@ -52,7 +54,7 @@ export function regionUnits(region: string | null = phoneRegion()): Pick<Setting
   return { speed: MPH.has(region) ? 'mph' : 'km/h', temp: FAHRENHEIT.has(region) ? '°F' : '°C' };
 }
 
-const DEFAULTS: Settings = { speed: 'mph', temp: '°C', autoConnect: false, autoCheck: false, debugLog: true, autoSendLog: true, sendFindings: true, sendTo: '', speedAuto: true, tempAuto: true, developer: false, alertSounds: true, backgroundRuns: true };
+const DEFAULTS: Settings = { speed: 'mph', temp: '°C', autoConnect: false, autoCheck: false, debugLog: true, autoSendLog: true, sendFindings: true, sendTo: '', speedAuto: true, tempAuto: true, developer: false, alertSounds: true, backgroundRuns: true, autoRead: true };
 const KEY = 'caristini.settings.v1';
 
 interface Ctx {

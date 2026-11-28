@@ -240,7 +240,7 @@ export function searchEverything(list: KbEntry[], v: { brand: string; model: str
     for (const i of dedupeItems(ALL_ITEMS.filter((x) => !x.held && (!v.platform || x.platforms.includes(v.platform))))) {
       const c = codings[i.module];
       if (c && !itemApplies(i, c, { style: c.length === 3 ? 'short' : 'long', part: v.modulePart?.(i.module) })) continue;
-      if (!q.length || hit(`${i.title} ${i.summary} ${i.category}`)) out.push(`[built-in setting ${i.id}] ${i.title}: ${i.summary} (module ${i.module}, byte ${i.byte}, bit ${i.bits.join('+')}, ${i.confidence})`);
+      if (!q.length || hit(`${i.title} ${i.summary} ${i.category}`)) out.push(`[built-in setting ${i.id}] ${i.title}: ${i.summary} (module ${i.module}, byte ${i.byte}, ${i.number ? `number ${i.number.min} to ${i.number.max}${i.number.unit ? ` ${i.number.unit}` : ''}` : `bit ${i.bits.join('+')}`}, ${i.confidence})`);
     }
   }
   if (!kind || kind === 'fuse') {

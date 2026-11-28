@@ -111,14 +111,17 @@ describe('Leon bulb checks and locking bits upgraded on 27 Nov 2026', () => {
       expect(item(id).held).toBe('A better source puts this elsewhere on this module.');
       expect(itemApplies(item(id), C46, { style: 'long' })).toBe(false);
     }
-    expect(item('cat-leon-rls-installed').held).toBe('This says what is fitted to the car. It is not a setting.');
+    expect(item('cat-leon-rls-installed').held).toBeUndefined();
+    expect(itemApplies(item('cat-leon-rls-installed'), C09, { style: 'long' })).toBe(true);
   });
 
   it('the boot opener is byte 2 bit 3 of a 19-byte Comfort coding on 1K0959433 and nothing else', () => {
     const boot = item('cat-leon-tailgate-soft-touch');
     expect([boot.byte, boot.bits, boot.length, boot.parts, boot.confidence, boot.held]).toEqual([2, [3], 19, ['1K0959433'], 'low', undefined]);
-    expect(boot.title).toBe('Boot opens from the key button');
-    expect(boot.sources).toEqual([{ label: 'vag-coding.net: Golf 5 automatic tailgate opening', url: 'https://www.vag-coding.net/vw/golf-5-1k/golf-5-1k-automatic-tailgate-opening-retrofit' }]);
+    expect(boot.title).toBe('Boot lock setting');
+    expect(boot.note).toContain('"Central Locking (Rear Lid) Softtouch (direct open/no release)"');
+    expect(boot.note).toContain('"ZV-Heckklappe 1-Motoren- statt 2-Motoren-Schloss verbaut"');
+    expect(boot.sources.map((s) => s.label)).toEqual(['vag-coding.net: Golf 5 automatic tailgate opening', 'VAGData: Passat B6 (3C) coding tables (same module family)']);
     const ctx = { style: 'long', part: '1K0959433BT' };
     expect(itemApplies(boot, C46, ctx)).toBe(true);
     expect(isOn(boot, C46)).toBe(true);
@@ -139,13 +142,13 @@ describe('Leon bulb checks and locking bits upgraded on 27 Nov 2026', () => {
     // On this car byte 8 is the daytime light level, 0x50 = 80 percent, so no switch may touch it.
     expect(C09[8]).toBe(80);
     for (const id of ['cat-leon-drl-separate', 'cat-leon-drl-position', 'cat-leon-fog-cornering', 'cat-leon-drl-off-indicating', 'cat-leon-low-beam-always']) expect(ids).not.toContain(id);
-    for (const i of codingItemsFor('vag', 'PQ35').filter((x) => x.module === 'vag-09' && itemApplies(x, C09, { style: 'long' }))) {
+    for (const i of codingItemsFor('vag', 'PQ35').filter((x) => x.module === 'vag-09' && !x.number && itemApplies(x, C09, { style: 'long' }))) {
       expect([7, 8, 9, 10, 11, 12, 13, 14, 15, 16]).not.toContain(i.byte);
     }
   });
 
   it('no two settings share a place', () => {
-    const keys = codingItemsFor('vag', 'PQ35').map((i) => `${i.module}|${i.length ?? ''}|${i.byte}|${i.bits.join()}|${i.field?.mask ?? ''}|${i.short?.flag ?? ''}`);
+    const keys = codingItemsFor('vag', 'PQ35').map((i) => `${i.module}|${i.length ?? ''}|${i.byte}|${i.bits.join()}|${i.field?.mask ?? ''}|${i.short?.flag ?? ''}|${i.number ? 'number' : ''}`);
     expect(new Set(keys).size).toBe(keys.length);
   });
 });

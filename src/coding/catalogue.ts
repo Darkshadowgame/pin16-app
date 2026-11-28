@@ -352,16 +352,15 @@ export const CATALOGUE_ITEMS: CodingItem[] = [
   },
   {
     id: 'cat-leon-rls-installed',
-    title: 'Rain/light sensor installed',
-    summary: 'Tells the module a rain/light sensor is fitted.',
+    title: 'Rain and light sensor fitted',
+    summary: 'Tells the car a rain and light sensor is fitted, for the automatic headlights.',
     category: 'Lights',
     platforms: ['PQ35'],
     module: 'vag-09',
     byte: 0,
     bits: [6],
     confidence: 'medium',
-    held: 'This says what is fitted to the car. It is not a setting.',
-    note: 'Equipment flag: set only with the sensor fitted, or the module logs faults.',
+    note: 'Set this on only if the car has the sensor. Sources disagree on whether the automatic headlights need it; a retrofit sensor may work without it. Put it back if the lights do not change, since a wrong setting can make the module log a fault.',
     sources: [
       { label: 'vagcode.info: 09 Cent. Elect. 3C0 937 049 E (23-byte labels)', url: 'https://vagcode.info/en/components/7756fed0e8d08ce7ea9b8c9e3d94ad63.html' },
       { label: 'Ross-Tech wiki: Golf (1K) tweaks', url: 'https://wiki.ross-tech.com/wiki/index.php/VW_Golf/Jetta/Bora_(1K/5M)_Tweaks' },
@@ -722,8 +721,8 @@ export const CATALOGUE_ITEMS: CodingItem[] = [
   },
   {
     id: 'cat-leon-tailgate-soft-touch',
-    title: 'Boot opens from the key button',
-    summary: 'Hold the boot button on the key for 2 seconds and the latch opens directly.',
+    title: 'Boot lock setting',
+    summary: 'Sources disagree on what this does: it may let the key button open the latch directly, or tell the module the boot has a 1-motor lock.',
     category: 'Locking and alarm',
     platforms: ['PQ35'],
     module: 'vag-46',
@@ -732,9 +731,10 @@ export const CATALOGUE_ITEMS: CodingItem[] = [
     byte: 2,
     bits: [3],
     confidence: 'low',
-    note: '1 source, written for the Golf 5 from 2006 with a retrofit opener. Reads on on this car.',
+    note: 'The 2 sources give different meanings. vag-coding.net, Golf 5 from 2006 with a retrofit opener: "Central Locking (Rear Lid) Softtouch (direct open/no release)". VAGData, Passat B6 table: "ZV-Heckklappe 1-Motoren- statt 2-Motoren-Schloss verbaut". Reads on on this car.',
     sources: [
       { label: 'vag-coding.net: Golf 5 automatic tailgate opening', url: 'https://www.vag-coding.net/vw/golf-5-1k/golf-5-1k-automatic-tailgate-opening-retrofit' },
+      { label: 'VAGData: Passat B6 (3C) coding tables (same module family)', url: 'https://vagdata.de/passat-b6/' },
     ],
   },
   // MQB

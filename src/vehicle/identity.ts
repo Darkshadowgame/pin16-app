@@ -69,6 +69,18 @@ export function acceptCarVin(client: object): void {
   s.accepted = s.live;
 }
 
+// Whether this connection's saved VIN is the car's own: 'yes' when it was read
+// from the car (source 'car' or 'modules'), or the background check read the
+// same VIN, or the owner accepted it; 'no' when the car reports another VIN;
+// 'unknown' while nothing is read yet. Read-only: starts no read.
+export function vinVerified(client: object, savedVin: string, source: string | null): 'yes' | 'no' | 'unknown' {
+  if (savedVin === NO_VIN_KEY) return 'unknown';
+  if (source === 'car' || source === 'modules') return 'yes';
+  const s = stateOf(client);
+  if (!s.live) return 'unknown';
+  return s.live === savedVin.toUpperCase() || s.live === s.accepted ? 'yes' : 'no';
+}
+
 // Returns null when it is safe to write, or the words to show when it is not.
 // 'car' and 'modules' mean the VIN was read from the car in this connection.
 // Anything else was remembered or typed. A car that gives no VIN cannot be

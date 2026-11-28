@@ -30,6 +30,7 @@ import { YourCars } from '../../../components/YourCars';
 import { quickCheckDue, useGarage, Vehicle, vehicleTitle } from '../../../vehicle/garage';
 import { useLastScan } from '../../../components/LastScan';
 import { GROUP_LABEL } from '../../../vehicle/vin';
+import { useAutoReadProgress } from '../../../learn/useAutoRead';
 
 export default function Home() {
   const conn = useConnection();
@@ -202,7 +203,9 @@ function Connected() {
 
   const name = v.nickname || [v.brand, v.model].filter(Boolean).join(' ');
   const detailLine = [v.year, v.nickname ? [v.brand, v.model].filter(Boolean).join(' ') : makeLogoFor(v.brand) ? null : v.brand, v.fuel, v.platform ?? (v.group !== 'other' ? GROUP_LABEL[v.group] : null)].filter(Boolean).join(' · ');
-  const customiseStatus = settings ? `${settings.toLocaleString('en-GB')} setting${settings === 1 ? '' : 's'} for this car` : readable ? 'Open to read this car’s settings' : mods.length ? `${mods.length} guide${mods.length === 1 ? '' : 's'}` : 'Learn my car first';
+  // While auto read runs on this car, its progress shows here.
+  const reading = useAutoReadProgress();
+  const customiseStatus = reading && reading.vin === v.vin ? reading.label : settings ? `${settings.toLocaleString('en-GB')} setting${settings === 1 ? '' : 's'} for this car` : readable ? 'Open to read this car’s settings' : mods.length ? `${mods.length} guide${mods.length === 1 ? '' : 's'}` : 'Learn my car first';
 
   return (
     <Screen title="Car" guide={GUIDES.home}>

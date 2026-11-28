@@ -11,6 +11,7 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { SettingsProvider, useSettings } from '../settings';
 import { ConnectionProvider } from '../state';
 import { useIsDark, useTheme } from '../theme';
+import { AutoRead } from '../learn/useAutoRead';
 import { GuideButton } from '../ui';
 import { GarageProvider } from '../vehicle/garage';
 // Defines the logger's GPS task at start-up (iOS can hand over positions as soon as the app opens).
@@ -46,6 +47,7 @@ export default function RootLayout() {
       <GarageProvider>
         <ConnectionProvider>
           <StatusBar style={dark ? 'light' : 'dark'} />
+          <AutoRead />
           <Stack
             screenOptions={{
               // iOS: the system bar material over scrolling content; other platforms: solid.

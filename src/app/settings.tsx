@@ -67,7 +67,7 @@ export default function SettingsScreen({ title, guide }: { title?: string; guide
         <ListRow title="Fahrenheit (°F)" selected={!settings.tempAuto && settings.temp === '°F'} noChevron onPress={() => set({ tempAuto: false, temp: '°F' })} />
       </Group>
 
-      <Group header="Connecting" help={SECTIONS.settingsConnecting}>
+      <Group header="Connecting" help={SECTIONS.settingsConnecting} footer="A car seen for the first time gets a full Learn, which adds a History entry and sends findings when sending is on.">
         {toggle(
           'Connect when the app opens',
           settings.autoConnect,
@@ -76,6 +76,7 @@ export default function SettingsScreen({ title, guide }: { title?: string; guide
           true,
         )}
         {toggle('Health check after connecting', settings.autoCheck, (v) => set({ autoCheck: v }), 'Runs a health check straight away')}
+        {toggle('Read all modules after connecting', settings.autoRead !== false, (v) => set({ autoRead: v }), 'Reads only, never changes the car')}
       </Group>
 
       <Group header="Alerts" footer="Plays with live data alerts, the shift light, the knock monitor and the DPF monitor, even with the phone on silent. The buzz stays on either way.">

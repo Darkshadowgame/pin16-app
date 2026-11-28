@@ -27,7 +27,8 @@ const bits = (n: number) => n.toString(2).replace(/0/g, '').length;
 const shortNumber = (c: number[]) => c[0] * 65536 + c[1] * 256 + c[2];
 
 describe('the 1 function that decides whether an item applies to a coding', () => {
-  const offered = car().items;
+  // Switches only: number items have their own invariants in the next describe.
+  const offered = car().items.filter((i) => !i.number && !i.pick);
 
   it('offers settings on the car, and none limited to a 30-byte coding', () => {
     expect(offered.length).toBeGreaterThan(40);
@@ -135,13 +136,13 @@ describe('the 1 function that decides whether an item applies to a coding', () =
     expect(itemApplies(bcm!, coding, { style: 'long', part: '3C0 937 049 AE' })).toBe(false);
     expect(itemApplies(bcm!, coding, { style: 'long', part: '' })).toBe(false);
     expect(itemApplies(old!, coding, { style: 'long', part: '3C0-937-049-E' })).toBe(true);
-    // The only Leon item that names a part family is the boot opener, which needs the part read.
-    expect(ALL_ITEMS.filter((i) => i.platforms.includes('PQ35') && i.parts).map((i) => i.id)).toEqual(['cat-leon-tailgate-soft-touch']);
+    // The Leon items that name a part family are the boot lock row and the Comfort rows from the Passat table, which need the part read.
+    expect(ALL_ITEMS.filter((i) => i.platforms.includes('PQ35') && i.parts).map((i) => i.id).sort()).toEqual(['cat-leon-alarm-arm-flash', 'cat-leon-alarm-arm-horn', 'cat-leon-alarm-auto-arm', 'cat-leon-alarm-siren', 'cat-leon-boot-central-locking', 'cat-leon-boot-contact', 'cat-leon-boot-soft-touch', 'cat-leon-mirror-dip-reverse', 'cat-leon-remote-ignition-on', 'cat-leon-sync-mirrors-b14', 'cat-leon-tailgate-soft-touch']);
   });
 });
 
 describe('items held back are not offered anywhere', () => {
-  const heldIds = ['cat-leon-lock-horn-remote', 'cat-leon-unlock-horn-remote', 'cat-leon-lock-flash-remote', 'cat-leon-unlock-flash-remote', 'cat-leon-mirror-sync', 'cat-leon-rls-installed', 'cat-leon-comfort-windows-remote'];
+  const heldIds = ['cat-leon-lock-horn-remote', 'cat-leon-unlock-horn-remote', 'cat-leon-lock-flash-remote', 'cat-leon-unlock-flash-remote', 'cat-leon-mirror-sync', 'cat-leon-comfort-windows-remote'];
 
   it('each has a plain reason, is refused by the gate and is not offered', () => {
     const ids = car().items.map((i) => i.id);
@@ -151,7 +152,6 @@ describe('items held back are not offered anywhere', () => {
       expect(whyNotOffered(i, CODINGS[i.module], ctxOf(i.module))).toBe(i.held);
       expect(ids).not.toContain(id);
     }
-    expect(ALL_ITEMS.find((x) => x.id === 'cat-leon-rls-installed')!.held).toBe('This says what is fitted to the car. It is not a setting.');
     expect(ALL_ITEMS.find((x) => x.id === 'cat-leon-mirror-sync')!.held).toBe('A better source puts this elsewhere on this module.');
   });
 
@@ -284,7 +284,7 @@ describe('typed adjustable values use the row own range', () => {
 
   it('the medium tag stays on a setting after it has been tried', () => {
     const src = fs.readFileSync(path.join(__dirname, '..', 'src/app/customise/index.tsx'), 'utf8');
-    expect(src).toMatch(/i\.confidence === 'medium' \? <Pill key="m" text="Reported by owners" \/>/);
+    expect(src).toMatch(/i\.confidence === 'medium' \? <Pill key="m" text="One source" \/>/);
     expect(src).not.toMatch(/'medium' && !tried/);
   });
 
@@ -305,7 +305,7 @@ describe('the count on the car after the 27 Nov hold-backs', () => {
     const part = (id: string) => (id === 'vag-46' ? '1K0959433BT' : '');
     const o = offeredSettings({ group: 'vag', platform: 'PQ35', codings: CODINGS, ctxOf: (id) => ({ style: STYLE[id], part: part(id) }), adaptValues: allAdaptValues() });
     const by = (c: string) => o.items.filter((i) => i.confidence === c).length;
-    expect([by('high'), by('medium'), by('low'), o.adapts.length, o.count]).toEqual([20, 23, 2, 19, 64]);
-    expect(o.items.filter((i) => i.confidence === 'low').map((i) => i.id).sort()).toEqual(['cat-leon-tailgate-remote', 'cat-leon-tailgate-soft-touch']);
+    expect([by('high'), by('medium'), by('low'), o.adapts.length, o.count]).toEqual([25, 28, 12, 19, 84]);
+    expect(o.items.filter((i) => i.confidence === 'low').map((i) => i.id).sort()).toEqual(['cat-leon-alarm-arm-flash', 'cat-leon-alarm-arm-horn', 'cat-leon-alarm-auto-arm', 'cat-leon-alarm-siren', 'cat-leon-boot-central-locking', 'cat-leon-boot-contact', 'cat-leon-boot-soft-touch', 'cat-leon-mirror-dip-reverse', 'cat-leon-remote-ignition-on', 'cat-leon-sync-mirrors-b14', 'cat-leon-tailgate-remote', 'cat-leon-tailgate-soft-touch']);
   });
 });

@@ -5,7 +5,16 @@
 import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
 import { useEffect } from 'react';
 
+// Tags held right now, so a background job can tell the owner is running
+// something else (src/learn/autoRead.ts).
+// A count for each tag, so a release by one holder does not drop a tag another still holds.
+const held = new Map<string, number>();
+export function heldTags(): string[] {
+  return [...held.keys()];
+}
+
 export function stayAwake(tag: string): void {
+  held.set(tag, (held.get(tag) ?? 0) + 1);
   try {
     activateKeepAwakeAsync(tag).catch(() => undefined);
   } catch {
@@ -14,6 +23,12 @@ export function stayAwake(tag: string): void {
 }
 
 export function allowSleep(tag: string): void {
+  const n = (held.get(tag) ?? 0) - 1;
+  if (n > 0) {
+    held.set(tag, n);
+    return;
+  }
+  held.delete(tag);
   try {
     Promise.resolve(deactivateKeepAwake(tag)).catch(() => undefined);
   } catch {
